@@ -1,5 +1,31 @@
 #!/bin/bash
 
+#!/bin/bash
+
+set -Eeuo pipefail
+trap 'echo "[ERRO] linha $LINENO: $BASH_COMMAND (status $?)" >&2' ERR
+
+echo "================================================= Verificação de permissão de root ================================================="
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Este script precisa ser executado como root."
+  exit 1
+fi
+# ================================================
+# Correção: evitar duplicação de repositórios no Ubuntu 24.04+
+# ================================================
+if grep -qi "Ubuntu 24.04" /etc/os-release 2>/dev/null; then
+  echo "Detectado Ubuntu 24.04 — limpando duplicações de sources.list..."
+  # Se já existe o arquivo .sources, comentar o sources.list tradicional
+  if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+    sed -i 's/^\s*deb /# deb /g' /etc/apt/sources.list
+  fi
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+
+is_ubuntu() { [ -f /etc/os-release ] && grep -qi ubuntu /etc/os-release; }
+
 ServerName=$1
 CloudflareAPI=$2
 CloudflareEmail=$3
