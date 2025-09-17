@@ -1,7 +1,5 @@
 #!/bin/bash
 
-#!/bin/bash
-
 set -Eeuo pipefail
 trap 'echo "[ERRO] linha $LINENO: $BASH_COMMAND (status $?)" >&2' ERR
 
@@ -44,7 +42,7 @@ ufw allow 25/tcp
 
 sudo apt-get update && sudo apt-get install wget curl jq python3-certbot-dns-cloudflare -y
 
-curl -fsSL https://deb.nodesource.com/setup_16.x | sudo bash -s
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -s
 
 sudo apt-get install nodejs -y
 npm i -g pm2
@@ -187,46 +185,72 @@ DKIMCode=$(/root/dkimcode.sh)
 
 sleep 5
 
-echo "  -- Obtendo Zona"
-CloudflareZoneID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$Domain&status=active" \
+echo "  -- Obtendo Zona para domínio: $Domain"
+echo "  -- Email: $CloudflareEmail"
+echo "  -- API Key: ${CloudflareAPI:0:10}..."
+
+CloudflareZoneResponse=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$Domain&status=active" \
   -H "X-Auth-Email: $CloudflareEmail" \
   -H "X-Auth-Key: $CloudflareAPI" \
-  -H "Content-Type: application/json" | jq -r '{"result"}[] | .[0] | .id')
-  
-  echo "  -- Cadastrando A"
-curl -s -o /dev/null -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
-     -H "X-Auth-Email: $CloudflareEmail" \
-     -H "X-Auth-Key: $CloudflareAPI" \
-     -H "Content-Type: application/json" \
-     --data '{ "type": "A", "name": "'$DKIMSelector'", "content": "'$ServerIP'", "ttl": 60, "proxied": false }'
+  -H "Content-Type: application/json")
 
-echo "  -- Cadastrando SPF"
-curl -s -o /dev/null -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
-     -H "X-Auth-Email: $CloudflareEmail" \
-     -H "X-Auth-Key: $CloudflareAPI" \
-     -H "Content-Type: application/json" \
-     --data '{ "type": "TXT", "name": "'$ServerName'", "content": "v=spf1 a:'$ServerName' ~all", "ttl": 60, "proxied": false }'
+echo "  -- Resposta da API (Zona): $CloudflareZoneResponse"
 
-echo "  -- Cadastrando DMARK"
-curl -s -o /dev/null -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
-     -H "X-Auth-Email: $CloudflareEmail" \
-     -H "X-Auth-Key: $CloudflareAPI" \
-     -H "Content-Type: application/json" \
-     --data '{ "type": "TXT", "name": "_dmarc.'$ServerName'", "content": "v=DMARC1; p=quarantine; sp=quarantine; rua=mailto:dmark@'$ServerName'; rf=afrf; fo=0:1:d:s; ri=86000; adkim=r; aspf=r", "ttl": 60, "proxied": false }'
+CloudflareZoneID=$(echo "$CloudflareZoneResponse" | jq -r '.result[0].id // empty')
 
-echo "  -- Cadastrando DKIM"
-curl -s -o /dev/null -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
-     -H "X-Auth-Email: $CloudflareEmail" \
-     -H "X-Auth-Key: $CloudflareAPI" \
-     -H "Content-Type: application/json" \
-     --data '{ "type": "TXT", "name": "'$DKIMSelector'._domainkey.'$ServerName'", "content": "v=DKIM1; h=sha256; k=rsa; p='$DKIMCode'", "ttl": 60, "proxied": false }'
+if [ -z "$CloudflareZoneID" ] || [ "$CloudflareZoneID" = "null" ]; then
+    echo "  ❌ ERRO: Não foi possível obter o Zone ID para o domínio $Domain"
+    echo "  -- Verifique se:"
+    echo "     1. O domínio $Domain está no Cloudflare"
+    echo "     2. A API Key está correta"
+    echo "     3. O email está correto"
+    echo "  -- Resposta completa: $CloudflareZoneResponse"
+else
+    echo "  ✅ Zone ID obtido: $CloudflareZoneID"
+    
+    echo "  -- Cadastrando registro A para $DKIMSelector"
+    AResponse=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
+         -H "X-Auth-Email: $CloudflareEmail" \
+         -H "X-Auth-Key: $CloudflareAPI" \
+         -H "Content-Type: application/json" \
+         --data '{ "type": "A", "name": "'$DKIMSelector'", "content": "'$ServerIP'", "ttl": 60, "proxied": false }')
+    echo "  -- Resposta A: $AResponse"
 
-echo "  -- Cadastrando MX"
-curl -s -o /dev/null -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
-     -H "X-Auth-Email: $CloudflareEmail" \
-     -H "X-Auth-Key: $CloudflareAPI" \
-     -H "Content-Type: application/json" \
-     --data '{ "type": "MX", "name": "'$ServerName'", "content": "'$ServerName'", "ttl": 60, "priority": 10, "proxied": false }'
+    echo "  -- Cadastrando registro SPF"
+    SPFResponse=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
+         -H "X-Auth-Email: $CloudflareEmail" \
+         -H "X-Auth-Key: $CloudflareAPI" \
+         -H "Content-Type: application/json" \
+         --data '{ "type": "TXT", "name": "'$ServerName'", "content": "v=spf1 a:'$ServerName' ~all", "ttl": 60, "proxied": false }')
+    echo "  -- Resposta SPF: $SPFResponse"
+
+    echo "  -- Cadastrando registro DMARC"
+    DMARCResponse=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
+         -H "X-Auth-Email: $CloudflareEmail" \
+         -H "X-Auth-Key: $CloudflareAPI" \
+         -H "Content-Type: application/json" \
+         --data '{ "type": "TXT", "name": "_dmarc.'$ServerName'", "content": "v=DMARC1; p=quarantine; sp=quarantine; rua=mailto:dmark@'$ServerName'; rf=afrf; fo=0:1:d:s; ri=86000; adkim=r; aspf=r", "ttl": 60, "proxied": false }')
+    echo "  -- Resposta DMARC: $DMARCResponse"
+
+    echo "  -- Cadastrando registro DKIM"
+    echo "  -- DKIM Code: ${DKIMCode:0:50}..."
+    DKIMResponse=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
+         -H "X-Auth-Email: $CloudflareEmail" \
+         -H "X-Auth-Key: $CloudflareAPI" \
+         -H "Content-Type: application/json" \
+         --data '{ "type": "TXT", "name": "'$DKIMSelector'._domainkey.'$ServerName'", "content": "v=DKIM1; h=sha256; k=rsa; p='$DKIMCode'", "ttl": 60, "proxied": false }')
+    echo "  -- Resposta DKIM: $DKIMResponse"
+
+    echo "  -- Cadastrando registro MX"
+    MXResponse=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
+         -H "X-Auth-Email: $CloudflareEmail" \
+         -H "X-Auth-Key: $CloudflareAPI" \
+         -H "Content-Type: application/json" \
+         --data '{ "type": "MX", "name": "'$ServerName'", "content": "'$ServerName'", "ttl": 60, "priority": 10, "proxied": false }')
+    echo "  -- Resposta MX: $MXResponse"
+    
+    echo "  ✅ Todos os registros DNS foram processados!"
+fi
 
 echo "==================================================== CLOUDFLARE ===================================================="
 
