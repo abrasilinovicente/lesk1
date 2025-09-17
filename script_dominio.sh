@@ -103,6 +103,42 @@ echo "-> Instalando e configurando servidor de email..."
 ) || log_error "Configuração do Servidor de Email"
 
 # ==============================================================================
+# 8.1. CONFIGURAÇÃO DE LOGGING DE EMAIL
+# ==============================================================================
+echo "-> Configurando logging de email..."
+(
+    # Configurar rsyslog para email
+    if ! grep -q "mail.*" /etc/rsyslog.conf; then
+        echo "" >> /etc/rsyslog.conf
+        echo "# Email logging configuration" >> /etc/rsyslog.conf
+        echo "mail.*                          /var/log/maillog" >> /etc/rsyslog.conf
+        echo "mail.info                       /var/log/mail.info" >> /etc/rsyslog.conf
+        echo "mail.warn                       /var/log/mail.warn" >> /etc/rsyslog.conf
+        echo "mail.err                        /var/log/mail.err" >> /etc/rsyslog.conf
+    fi
+    
+    # Criar arquivos de log
+    touch /var/log/maillog /var/log/mail.info /var/log/mail.warn /var/log/mail.err
+    chmod 640 /var/log/maillog /var/log/mail.*
+    chown syslog:adm /var/log/maillog /var/log/mail.*
+    
+    # Adicionar configurações de logging no Postfix
+    echo "
+# Logging configuration
+syslog_facility = mail
+syslog_name = postfix
+" >> /etc/postfix/main.cf
+    
+    # Reiniciar serviços
+    systemctl restart rsyslog
+    systemctl restart postfix
+    
+    echo "✅ Logging configurado - arquivos criados:"
+    ls -la /var/log/mail*
+    
+) || log_error "Configuração de Logging de Email"
+
+# ==============================================================================
 # 9. CONFIGURAÇÃO CLOUDFLARE DNS
 # ==============================================================================
 if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
