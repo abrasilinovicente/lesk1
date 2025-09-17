@@ -28,7 +28,18 @@ ServerName=$1
 CloudflareAPI=$2
 CloudflareEmail=$3
 
-Domain=$(echo $ServerName | cut -d "." -f2-)
+# Verificar se é domínio direto ou hostname
+if [[ ! $ServerName =~ ^[0-9-]+\. ]]; then
+    # É um domínio direto, criar hostname
+    ServerIP=$(wget -qO- http://ip-api.com/line\?fields=query)
+    IPFormatted=$(echo $ServerIP | tr '.' '-')
+    Domain="$ServerName"
+    ServerName="$IPFormatted.$Domain"
+else
+    # É hostname completo, extrair domínio
+    Domain=$(echo $ServerName | cut -d "." -f2-)
+fi
+
 DKIMSelector=$(echo $ServerName | awk -F[.:] '{print $1}')
 ServerIP=$(wget -qO- http://ip-api.com/line\?fields=query)
 
