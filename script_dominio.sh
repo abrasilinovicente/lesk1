@@ -133,10 +133,16 @@ echo "-> Configurando logging de email..."
 ) || echo "⚠️ Aviso: Problema na configuração de logging (não crítico)"
 
 # ==============================================================================
-# 9. CONFIGURAÇÃO CLOUDFLARE DNS (LIMPEZA DEFINITIVA)
+# 9. CONFIGURAÇÃO CLOUDFLARE DNS (MÉTODO SIMPLES E EFICAZ)
 # ==============================================================================
 if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     echo "-> Configurando DNS no Cloudflare..."
+    
+    # Instalar jq se não existir
+    if ! command -v jq &> /dev/null; then
+        echo "-> Instalando jq..."
+        apt-get install -y jq
+    fi
     
     DKIM_FILE="/etc/opendkim/keys/default.txt"
     
@@ -144,72 +150,85 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     cat "$DKIM_FILE"
     echo "================================"
     
-    # Método DEFINITIVO - limpeza em etapas
-    echo "-> Extraindo código DKIM (método definitivo)..."
+    # Usar seu método simples e eficaz
+    echo "-> Extraindo código DKIM (método simples)..."
     
-    # Etapa 1: Pegar todo conteúdo em uma linha
-    FULL_CONTENT=$(cat "$DKIM_FILE" | tr -d '\n\r')
-    echo "-> Etapa 1 - Uma linha: ${FULL_CONTENT:0:100}..."
+    # Extrair apenas a parte da chave pública
+    DKIMCode=$(grep -A 10 'p=' "$DKIM_FILE" | grep -v '; -----' | tr -d '\n\r\t "()' | sed 's/.*p=//; s/;.*//; s/v=DKIM1.*//; s/h=sha256.*//; s/k=rsa.*//;')
     
-    # Etapa 2: Extrair entre p=" e " antes do )
-    PUBKEY=$(echo "$FULL_CONTENT" | sed 's/.*p="//; s/").*//')
-    echo "-> Etapa 2 - Extração bruta: '${PUBKEY:0:50}...' (${#PUBKEY} chars)"
+    echo "-> Primeira tentativa: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
     
-    # Etapa 3: Remover espaços e tabs
-    PUBKEY=$(echo "$PUBKEY" | tr -d ' \t')
-    echo "-> Etapa 3 - Sem espaços: '${PUBKEY:0:50}...' (${#PUBKEY} chars)"
-    
-    # Etapa 4: REMOVER p= do início se existir
-    if echo "$PUBKEY" | grep -q '^p='; then
-        PUBKEY=$(echo "$PUBKEY" | sed 's/^p=//')
-        echo "-> Etapa 4 - Removido p= duplicado: '${PUBKEY:0:50}...' (${#PUBKEY} chars)"
+    # Se não funcionou, método mais direto
+    if [ -z "$DKIMCode" ] || [ ${#DKIMCode} -lt 100 ]; then
+        echo "-> Tentando método alternativo..."
+        
+        # Pegar todas as linhas com aspas, remover tudo exceto a chave
+        DKIMCode=$(cat "$DKIM_FILE" | grep '"' | grep -v '; -----' | tr -d '"' | tr -d ' \t\n\r' | sed 's/.*p=//; s/v=DKIM1.*//; s/h=sha256.*//; s/k=rsa.*//;')
+        
+        echo "-> Segunda tentativa: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
     fi
     
-    # Etapa 5: Cortar no primeiro caractere não-Base64 após uma sequência válida
-    # Procurar por padrões conhecidos de lixo
-    PUBKEY=$(echo "$PUBKEY" | sed 's/DKIM.*//')
-    PUBKEY=$(echo "$PUBKEY" | sed 's/key.*//')
-    PUBKEY=$(echo "$PUBKEY" | sed 's/default.*//')
-    PUBKEY=$(echo "$PUBKEY" | sed 's/for.*//')
-    PUBKEY=$(echo "$PUBKEY" | sed 's/novo1.*//')
-    PUBKEY=$(echo "$PUBKEY" | sed 's/eracreators.*//')
-    PUBKEY=$(echo "$PUBKEY" | sed 's/com.*//')
-    echo "-> Etapa 5 - Removido lixo conhecido: '${PUBKEY:0:50}...' (${#PUBKEY} chars)"
-    
-    # Etapa 6: Manter APENAS caracteres Base64 válidos (A-Z, a-z, 0-9, +, /, =)
-    PUBKEY_CLEAN=$(echo "$PUBKEY" | sed 's/[^A-Za-z0-9+\/=]//g')
-    echo "-> Etapa 6 - Apenas Base64: '${PUBKEY_CLEAN:0:50}...' (${#PUBKEY_CLEAN} chars)"
-    
-    # Etapa 7: Verificar se termina corretamente (chaves RSA terminam com AQAB ou similar)
-    if echo "$PUBKEY_CLEAN" | grep -q 'AQAB'; then
-        # Cortar após AQAB (fim típico de chave RSA)
-        PUBKEY_FINAL=$(echo "$PUBKEY_CLEAN" | sed 's/\$.*AQAB\$.*/\1/')
-        echo "-> Etapa 7 - Cortado após AQAB: '${PUBKEY_FINAL:0:50}...' (${#PUBKEY_FINAL} chars)"
-    else
-        PUBKEY_FINAL="$PUBKEY_CLEAN"
-        echo "-> Etapa 7 - Sem AQAB encontrado, mantendo: '${PUBKEY_FINAL:0:50}...' (${#PUBKEY_FINAL} chars)"
+    # Se ainda não funcionou, método de força bruta
+    if [ -z "$DKIMCode" ] || [ ${#DKIMCode} -lt 100 ]; then
+        echo "-> Método de força bruta..."
+        
+        # Extrair tudo que parece ser Base64 após encontrar uma linha com p=
+        DKIMCode=""
+        FOUND_P=false
+        
+        while IFS= read -r line; do
+            if echo "$line" | grep -q 'p='; then
+                FOUND_P=true
+                # Extrair a parte após p=
+                temp=$(echo "$line" | sed 's/.*p=//; s/".*//; s/ //g')
+                DKIMCode="$DKIMCode$temp"
+            elif [ "$FOUND_P" = true ] && echo "$line" | grep -q '"'; then
+                # Linha de continuação
+                temp=$(echo "$line" | tr -d '"' | tr -d ' \t')
+                DKIMCode="$DKIMCode$temp"
+                
+                # Se encontrou ), parar
+                if echo "$line" | grep -q ')'; then
+                    break
+                fi
+            fi
+        done < "$DKIM_FILE"
+        
+        echo "-> Força bruta: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
     fi
     
-    # Validação final
-    echo "-> Chave DKIM final:"
-    echo "   Tamanho: ${#PUBKEY_FINAL} caracteres"
-    echo "   Início: ${PUBKEY_FINAL:0:80}..."
-    echo "   Final: ...${PUBKEY_FINAL: -80}"
+    # Limpeza final usando seu método
+    DKIMCode=$(echo "$DKIMCode" | tr -d '\n' | tr -s ' ')
     
-    # Verificar se tem tamanho adequado
-    if [ ${#PUBKEY_FINAL} -lt 300 ]; then
-        echo "❌ ERRO: Chave muito curta (${#PUBKEY_FINAL} caracteres)"
+    # Remover qualquer lixo conhecido
+    DKIMCode=$(echo "$DKIMCode" | sed 's/[^A-Za-z0-9+\/=]//g')
+    
+    echo "-> Código DKIM final:"
+    echo "   Tamanho: ${#DKIMCode} caracteres"
+    echo "   Início: ${DKIMCode:0:50}..."
+    echo "   Final: ...${DKIMCode: -50}"
+    
+    # Validação
+    if [ ${#DKIMCode} -lt 300 ]; then
+        echo "❌ ERRO: Chave DKIM muito curta (${#DKIMCode} caracteres)"
+        echo "Debug do arquivo:"
+        echo "=================="
+        cat "$DKIM_FILE" | nl
+        echo "=================="
         exit 1
     fi
     
-    # Verificar se é Base64 puro
-    if echo "$PUBKEY_FINAL" | grep -q '^[A-Za-z0-9+/]*=*$'; then
-        echo "✅ Chave DKIM válida (Base64 puro, ${#PUBKEY_FINAL} caracteres)"
+    # Verificar se é Base64 válido
+    if echo "$DKIMCode" | grep -q '^[A-Za-z0-9+/]*=*$'; then
+        echo "✅ Chave DKIM válida (${#DKIMCode} caracteres)"
     else
-        echo "❌ ERRO: Chave ainda contém caracteres inválidos"
-        echo "Chave: '$PUBKEY_FINAL'"
+        echo "❌ ERRO: Chave contém caracteres inválidos"
+        echo "Chave: '$DKIMCode'"
         exit 1
     fi
+    
+    # Escapar aspas para JSON
+    EscapedDKIMCode=$(printf '%s' "$DKIMCode" | sed 's/\"/\\\"/g')
     
     # Obter Zone ID
     echo "-> Obtendo Zone ID do Cloudflare para $MAIN_DOMAIN..."
@@ -219,69 +238,58 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
         -H "Content-Type: application/json" | jq -r '.result[0].id // empty')
     
     if [ -z "$ZONE_ID" ] || [ "$ZONE_ID" = "null" ]; then
-        echo "⚠️ Zone ID não encontrado"
+        echo "⚠️ Zone ID não encontrado para $MAIN_DOMAIN"
+        echo ""
         echo "=== CONFIGURAÇÃO MANUAL ==="
         echo "Nome: default._domainkey.$DOMAIN"
         echo "Tipo: TXT"
-        echo "Valor: v=DKIM1; h=sha256; k=rsa; p=$PUBKEY_FINAL"
+        echo "Valor: v=DKIM1; h=sha256; k=rsa; p=$DKIMCode"
         echo "=========================="
     else
-        echo "✅ Zone ID: $ZONE_ID"
+        echo "✅ Zone ID obtido: $ZONE_ID"
         
-        # Remover registros antigos
-        echo "-> Removendo registros DKIM antigos..."
-        EXISTING=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=default._domainkey.$DOMAIN&type=TXT" \
-            -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
-            -H "X-Auth-Key: $CLOUDFLARE_API" \
-            -H "Content-Type: application/json")
-        
-        echo "$EXISTING" | jq -r '.result[]?.id' 2>/dev/null | while read -r record_id; do
-            if [ -n "$record_id" ] && [ "$record_id" != "null" ]; then
-                echo "-> Deletando registro antigo: $record_id"
-                curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$record_id" \
-                    -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
-                    -H "X-Auth-Key: $CLOUDFLARE_API" > /dev/null
-            fi
-        done
-        
-        sleep 3
-        
-        # Criar registro LIMPO (SEM p= duplicado)
-        echo "-> Criando registro DKIM limpo..."
-        
-        DKIM_CONTENT="v=DKIM1; h=sha256; k=rsa; p=$PUBKEY_FINAL"
-        
-        echo "-> Registro final (SEM p= duplicado):"
-        echo "   Nome: default._domainkey.$DOMAIN"
-        echo "   Tamanho: ${#DKIM_CONTENT} caracteres"
-        echo "   Conteúdo: ${DKIM_CONTENT:0:100}..."
-        
-        RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
-            -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
-            -H "X-Auth-Key: $CLOUDFLARE_API" \
-            -H "Content-Type: application/json" \
-            --data "{\"type\":\"TXT\",\"name\":\"default._domainkey.$DOMAIN\",\"content\":\"$DKIM_CONTENT\",\"ttl\":300,\"proxied\":false}")
-        
-        if echo "$RESPONSE" | grep -q '"success":true'; then
-            echo "✅ DKIM configurado com sucesso!"
-            echo "✅ Chave LIMPA de ${#PUBKEY_FINAL} caracteres"
-            RECORD_ID=$(echo "$RESPONSE" | jq -r '.result.id' 2>/dev/null)
-            echo "✅ ID do registro: $RECORD_ID"
+        # Função para criar/atualizar registro (baseada na sua sugestão)
+        create_or_update_record() {
+            local name="$1"
+            local type="$2"
+            local content="$3"
             
-            # Verificar o registro criado
-            echo "-> Verificando registro criado..."
-            VERIFY=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
+            echo "-> Criando/atualizando registro $name..."
+            
+            # Verificar se já existe
+            EXISTING=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=$name&type=$type" \
                 -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
                 -H "X-Auth-Key: $CLOUDFLARE_API" \
                 -H "Content-Type: application/json")
             
-            CREATED_CONTENT=$(echo "$VERIFY" | jq -r '.result.content' 2>/dev/null)
-            echo "-> Conteúdo criado: ${CREATED_CONTENT:0:100}..."
+            RECORD_ID=$(echo "$EXISTING" | jq -r '.result[0].id // empty')
             
-        else
-            echo "❌ Erro ao criar registro:"
-            echo "$RESPONSE"
-        fi
+            if [ -n "$RECORD_ID" ] && [ "$RECORD_ID" != "null" ]; then
+                echo "-> Atualizando registro existente: $RECORD_ID"
+                RESPONSE=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
+                    -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
+                    -H "X-Auth-Key: $CLOUDFLARE_API" \
+                    -H "Content-Type: application/json" \
+                    --data "{\"type\":\"$type\",\"name\":\"$name\",\"content\":$content,\"ttl\":300}")
+            else
+                echo "-> Criando novo registro..."
+                RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
+                    -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
+                    -H "X-Auth-Key: $CLOUDFLARE_API" \
+                    -H "Content-Type: application/json" \
+                    --data "{\"type\":\"$type\",\"name\":\"$name\",\"content\":$content,\"ttl\":300}")
+            fi
+            
+            if echo "$RESPONSE" | jq -r '.success' | grep -q "true"; then
+                echo "✅ Registro $name configurado com sucesso!"
+            else
+                echo "❌ Erro ao configurar $name:"
+                echo "$RESPONSE" | jq -r '.errors[]?.message // "Erro desconhecido"'
+            fi
+        }
+        
+        # Criar registro DKIM usando sua função
+        create_or_update_record "default._domainkey.$DOMAIN" "TXT" "\"v=DKIM1; h=sha256; k=rsa; p=$EscapedDKIMCode\""
     fi
     
     echo "✅ Configuração DNS finalizada!"
