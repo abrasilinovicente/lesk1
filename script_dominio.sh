@@ -1,5 +1,8 @@
 #!/bin/bash
 
+set -Eeuo pipefail
+trap 'echo "[ERRO] linha $LINENO: $BASH_COMMAND (status $?)" >&2' ERR
+
 #================================================================================
 # Script de Configuração Final (v2.7 - À Prova de Falhas)
 # Utiliza && para garantir que o script pare se qualquer etapa crítica falhar.
