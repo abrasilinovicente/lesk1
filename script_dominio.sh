@@ -1,27 +1,5 @@
 #!/bin/bash
 
-set -Eeuo pipefail
-trap 'echo "[ERRO] linha $LINENO: $BASH_COMMAND (status $?)" >&2' ERR
-
-echo "================================================= Verificação de permissão de root ================================================="
-
-if [ "$(id -u)" -ne 0 ]; then
-  echo "Este script precisa ser executado como root."
-  exit 1
-fi
-# ================================================
-# Correção: evitar duplicação de repositórios no Ubuntu 24.04+
-# ================================================
-if grep -qi "Ubuntu 24.04" /etc/os-release 2>/dev/null; then
-  echo "Detectado Ubuntu 24.04 — limpando duplicações de sources.list..."
-  # Se já existe o arquivo .sources, comentar o sources.list tradicional
-  if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-    sed -i 's/^\s*deb /# deb /g' /etc/apt/sources.list
-  fi
-fi
-
-export DEBIAN_FRONTEND=noninteractive
-
 ServerName=$1
 CloudflareAPI=$2
 CloudflareEmail=$3
@@ -32,6 +10,7 @@ ServerIP=$(wget -qO- http://ip-api.com/line\?fields=query)
 
 echo "Configuando Servidor: $ServerName"
 
+sleep 10
 
 echo "==================================================================== Hostname && SSL ===================================================================="
 
@@ -182,72 +161,46 @@ DKIMCode=$(/root/dkimcode.sh)
 
 sleep 5
 
-echo "  -- Obtendo Zona para domínio: $Domain"
-echo "  -- Email: $CloudflareEmail"
-echo "  -- API Key: ${CloudflareAPI:0:10}..."
-
-CloudflareZoneResponse=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$Domain&status=active" \
+echo "  -- Obtendo Zona"
+CloudflareZoneID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$Domain&status=active" \
   -H "X-Auth-Email: $CloudflareEmail" \
   -H "X-Auth-Key: $CloudflareAPI" \
-  -H "Content-Type: application/json")
+  -H "Content-Type: application/json" | jq -r '{"result"}[] | .[0] | .id')
+  
+  echo "  -- Cadastrando A"
+curl -s -o /dev/null -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
+     -H "X-Auth-Email: $CloudflareEmail" \
+     -H "X-Auth-Key: $CloudflareAPI" \
+     -H "Content-Type: application/json" \
+     --data '{ "type": "A", "name": "'$DKIMSelector'", "content": "'$ServerIP'", "ttl": 60, "proxied": false }'
 
-echo "  -- Resposta da API (Zona): $CloudflareZoneResponse"
+echo "  -- Cadastrando SPF"
+curl -s -o /dev/null -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
+     -H "X-Auth-Email: $CloudflareEmail" \
+     -H "X-Auth-Key: $CloudflareAPI" \
+     -H "Content-Type: application/json" \
+     --data '{ "type": "TXT", "name": "'$ServerName'", "content": "v=spf1 a:'$ServerName' ~all", "ttl": 60, "proxied": false }'
 
-CloudflareZoneID=$(echo "$CloudflareZoneResponse" | jq -r '.result[0].id // empty')
+echo "  -- Cadastrando DMARK"
+curl -s -o /dev/null -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
+     -H "X-Auth-Email: $CloudflareEmail" \
+     -H "X-Auth-Key: $CloudflareAPI" \
+     -H "Content-Type: application/json" \
+     --data '{ "type": "TXT", "name": "_dmarc.'$ServerName'", "content": "v=DMARC1; p=quarantine; sp=quarantine; rua=mailto:dmark@'$ServerName'; rf=afrf; fo=0:1:d:s; ri=86000; adkim=r; aspf=r", "ttl": 60, "proxied": false }'
 
-if [ -z "$CloudflareZoneID" ] || [ "$CloudflareZoneID" = "null" ]; then
-    echo "  ❌ ERRO: Não foi possível obter o Zone ID para o domínio $Domain"
-    echo "  -- Verifique se:"
-    echo "     1. O domínio $Domain está no Cloudflare"
-    echo "     2. A API Key está correta"
-    echo "     3. O email está correto"
-    echo "  -- Resposta completa: $CloudflareZoneResponse"
-else
-    echo "  ✅ Zone ID obtido: $CloudflareZoneID"
-    
-    echo "  -- Cadastrando registro A para $DKIMSelector"
-    AResponse=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
-         -H "X-Auth-Email: $CloudflareEmail" \
-         -H "X-Auth-Key: $CloudflareAPI" \
-         -H "Content-Type: application/json" \
-         --data '{ "type": "A", "name": "'$DKIMSelector'", "content": "'$ServerIP'", "ttl": 60, "proxied": false }')
-    echo "  -- Resposta A: $AResponse"
+echo "  -- Cadastrando DKIM"
+curl -s -o /dev/null -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
+     -H "X-Auth-Email: $CloudflareEmail" \
+     -H "X-Auth-Key: $CloudflareAPI" \
+     -H "Content-Type: application/json" \
+     --data '{ "type": "TXT", "name": "'$DKIMSelector'._domainkey.'$ServerName'", "content": "v=DKIM1; h=sha256; k=rsa; p='$DKIMCode'", "ttl": 60, "proxied": false }'
 
-    echo "  -- Cadastrando registro SPF"
-    SPFResponse=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
-         -H "X-Auth-Email: $CloudflareEmail" \
-         -H "X-Auth-Key: $CloudflareAPI" \
-         -H "Content-Type: application/json" \
-         --data '{ "type": "TXT", "name": "'$ServerName'", "content": "v=spf1 a:'$ServerName' ~all", "ttl": 60, "proxied": false }')
-    echo "  -- Resposta SPF: $SPFResponse"
-
-    echo "  -- Cadastrando registro DMARC"
-    DMARCResponse=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
-         -H "X-Auth-Email: $CloudflareEmail" \
-         -H "X-Auth-Key: $CloudflareAPI" \
-         -H "Content-Type: application/json" \
-         --data '{ "type": "TXT", "name": "_dmarc.'$ServerName'", "content": "v=DMARC1; p=quarantine; sp=quarantine; rua=mailto:dmark@'$ServerName'; rf=afrf; fo=0:1:d:s; ri=86000; adkim=r; aspf=r", "ttl": 60, "proxied": false }')
-    echo "  -- Resposta DMARC: $DMARCResponse"
-
-    echo "  -- Cadastrando registro DKIM"
-    echo "  -- DKIM Code: ${DKIMCode:0:50}..."
-    DKIMResponse=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
-         -H "X-Auth-Email: $CloudflareEmail" \
-         -H "X-Auth-Key: $CloudflareAPI" \
-         -H "Content-Type: application/json" \
-         --data '{ "type": "TXT", "name": "'$DKIMSelector'._domainkey.'$ServerName'", "content": "v=DKIM1; h=sha256; k=rsa; p='$DKIMCode'", "ttl": 60, "proxied": false }')
-    echo "  -- Resposta DKIM: $DKIMResponse"
-
-    echo "  -- Cadastrando registro MX"
-    MXResponse=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
-         -H "X-Auth-Email: $CloudflareEmail" \
-         -H "X-Auth-Key: $CloudflareAPI" \
-         -H "Content-Type: application/json" \
-         --data '{ "type": "MX", "name": "'$ServerName'", "content": "'$ServerName'", "ttl": 60, "priority": 10, "proxied": false }')
-    echo "  -- Resposta MX: $MXResponse"
-    
-    echo "  ✅ Todos os registros DNS foram processados!"
-fi
+echo "  -- Cadastrando MX"
+curl -s -o /dev/null -X POST "https://api.cloudflare.com/client/v4/zones/$CloudflareZoneID/dns_records" \
+     -H "X-Auth-Email: $CloudflareEmail" \
+     -H "X-Auth-Key: $CloudflareAPI" \
+     -H "Content-Type: application/json" \
+     --data '{ "type": "MX", "name": "'$ServerName'", "content": "'$ServerName'", "ttl": 60, "priority": 10, "proxied": false }'
 
 echo "==================================================== CLOUDFLARE ===================================================="
 
@@ -310,14 +263,7 @@ app.post("/email-manager/tmt/sendmail", async (req,res) => {
 })
 app.listen(4235)'  | tee /root/server.js > /dev/null
 
-cd /root && npm install && pm2 start server.js && pm2 startup && pm2 save
-
-npm install axios dotenv events
-
-
-export DEBIAN_FRONTEND=noninteractive
-
-is_ubuntu() { [ -f /etc/os-release ] && grep -qi ubuntu /etc/os-release; }
+cd /root && npm install && npm install axios dotenv events && pm2 start server.js && pm2 startup && pm2 save
 
 echo "================================================= Verificação e instalação do PHP (CLI) ================================================="
 
@@ -369,3 +315,8 @@ echo "==================================================== APPLICATION =========
 
 # Adicionando um log no final
 echo "Todos os comandos foram executados com sucesso!"
+
+
+sudo reboot
+
+echo "==================================================== APPLICATION ===================================================="
