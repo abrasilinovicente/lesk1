@@ -144,12 +144,37 @@ syslog_name = postfix
 if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     echo "-> Configurando DNS no Cloudflare..."
     
-    # Extrair código DKIM
+    # Extrair código DKIM (método melhorado)
     echo "-> Extraindo código DKIM..."
     DKIM_RECORD=$(cat /etc/opendkim/keys/default.txt)
-    DKIM_CODE=$(echo "$DKIM_RECORD" | grep -o 'p=[^"]*' | cut -d'=' -f2 | tr -d ' \n\t')
     
-    echo "-> Código DKIM extraído: ${DKIM_CODE:0:50}..."
+    # Método mais robusto para extrair o código DKIM completo
+    DKIM_CODE=$(echo "$DKIM_RECORD" | sed -n 's/.*p=\$[^"]*\$.*/\1/p' | tr -d ' \t\n\r")')
+    
+    # Se o método acima falhar, usar método alternativo
+    if [ -z "$DKIM_CODE" ]; then
+        echo "-> Tentando método alternativo de extração..."
+        DKIM_CODE=$(grep -oP 'p=\K[^"]*' /etc/opendkim/keys/default.txt | tr -d ' \t\n\r")')
+    fi
+    
+    # Se ainda estiver vazio, extrair manualmente linha por linha
+    if [ -z "$DKIM_CODE" ]; then
+        echo "-> Extraindo manualmente..."
+        DKIM_CODE=$(awk '/p=/{gsub(/[" \t\n\r\$]/,""); gsub(/.*p=/,""); print}' /etc/opendkim/keys/default.txt | tr -d '\n')
+    fi
+    
+    echo "-> Código DKIM extraído (${#DKIM_CODE} caracteres): ${DKIM_CODE:0:50}...${DKIM_CODE: -20}"
+    
+    # Verificar se o código tem tamanho adequado
+    if [ ${#DKIM_CODE} -lt 300 ]; then
+        echo "⚠️ AVISO: Código DKIM parece estar incompleto (${#DKIM_CODE} caracteres)"
+        echo "Conteúdo completo do arquivo default.txt:"
+        cat /etc/opendkim/keys/default.txt
+        echo "Tentando extração completa..."
+        # Extrair tudo entre aspas após p=
+        DKIM_CODE=$(sed -n '/p=/,/)/{s/.*p=//;s/[" \t\n\r)]//g;p}' /etc/opendkim/keys/default.txt | tr -d '\n')
+        echo "Nova tentativa: ${#DKIM_CODE} caracteres"
+    fi
     
     # Obter Zone ID
     echo "-> Obtendo Zone ID do Cloudflare..."
@@ -164,21 +189,41 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     else
         echo "✅ Zone ID obtido: $ZONE_ID"
         
-       
-        # Cadastrar registro DKIM
+        # Cadastrar registro DKIM com tratamento para chaves longas
         echo "-> Cadastrando registro DKIM..."
-        curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
+        
+        # Preparar conteúdo do registro DKIM
+        DKIM_CONTENT="v=DKIM1; h=sha256; k=rsa; p=$DKIM_CODE"
+        
+        echo "-> Criando registro com ${#DKIM_CONTENT} caracteres totais"
+        
+        RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
             -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
             -H "X-Auth-Key: $CLOUDFLARE_API" \
             -H "Content-Type: application/json" \
-            --data "{\"type\":\"TXT\",\"name\":\"default._domainkey.$DOMAIN\",\"content\":\"v=DKIM1; h=sha256; k=rsa; p=$DKIM_CODE\",\"ttl\":300,\"proxied\":false}" > /dev/null
+            --data "{\"type\":\"TXT\",\"name\":\"default._domainkey.$DOMAIN\",\"content\":\"$DKIM_CONTENT\",\"ttl\":300,\"proxied\":false}")
         
-        echo "✅ Registros DNS configurados automaticamente no Cloudflare!"
+        # Verificar se houve sucesso
+        if echo "$RESPONSE" | jq -r '.success' | grep -q "true"; then
+            echo "✅ Registro DKIM criado com sucesso no Cloudflare!"
+            echo "Nome: default._domainkey.$DOMAIN"
+            echo "Tamanho da chave: ${#DKIM_CODE} caracteres"
+        else
+            echo "❌ Erro ao criar registro DKIM:"
+            echo "$RESPONSE" | jq -r '.errors[]?.message // "Erro desconhecido"'
+            echo ""
+            echo "=== REGISTRO DKIM PARA CONFIGURAÇÃO MANUAL ==="
+            echo "Nome: default._domainkey.$DOMAIN"
+            echo "Tipo: TXT"
+            echo "Valor: $DKIM_CONTENT"
+            echo "=============================================="
+        fi
+        
+        echo "✅ Configuração DNS finalizada!"
     fi
 else
     echo "⚠️ Credenciais do Cloudflare não fornecidas. Pulando configuração DNS automática."
 fi
-
 # ==============================================================================
 # 10. FINALIZAÇÃO
 # ==============================================================================
