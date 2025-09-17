@@ -133,7 +133,7 @@ echo "-> Configurando logging de email..."
 ) || echo "⚠️ Aviso: Problema na configuração de logging (não crítico)"
 
 # ==============================================================================
-# 9. CONFIGURAÇÃO CLOUDFLARE DNS (MÉTODO DIRETO E EFICIENTE)
+# 9. CONFIGURAÇÃO CLOUDFLARE DNS (CAPTURA COMPLETA)
 # ==============================================================================
 if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     echo "-> Configurando DNS no Cloudflare..."
@@ -145,50 +145,93 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     cat "$DKIM_FILE"
     echo "================================"
     
-    # Extrair chave DKIM usando seu método melhorado
-    echo "-> Extraindo código DKIM (método direto)..."
+    # Método GARANTIDO: capturar TODAS as linhas entre p= e )
+    echo "-> Extraindo código DKIM completo..."
     
-    # Método 1: Procurar linha que começa com p=
-    PUBKEY=$(grep '^p=' "$DKIM_FILE" | sed 's/^p=//;s/[ \t\r\n]*//g' | tr -d '();')
-    echo "-> Método 1 (grep ^p=): '${PUBKEY:0:50}...' (${#PUBKEY} chars)"
+    # Usar sed para capturar desde p= até o final do registro
+    PUBKEY=$(sed -n '/p=/,/)/{
+        s/.*p="//
+        s/"[[:space:]]*$//
+        s/^[[:space:]]*"//
+        s/"[[:space:]]*$//
+        s/")[[:space:]]*;.*//
+        s/[[:space:]]//g
+        p
+    }' "$DKIM_FILE" | tr -d '\n' | sed 's/[^A-Za-z0-9+\/=]//g')
     
-    # Método 2: Se não encontrou, usar método alternativo
-    if [ -z "$PUBKEY" ]; then
-        echo "-> Tentando método 2..."
-        PUBKEY=$(cat "$DKIM_FILE" | tr -d '\n\r\t"();' | sed -E 's/.*p=//;s/[ ]*//g')
-        echo "-> Método 2 (cat + tr): '${PUBKEY:0:50}...' (${#PUBKEY} chars)"
+    echo "-> Método sed: '${PUBKEY:0:50}...' (${#PUBKEY} chars)"
+    
+    # Se não funcionou, método de força bruta
+    if [ -z "$PUBKEY" ] || [ ${#PUBKEY} -lt 300 ]; then
+        echo "-> Usando método de força bruta..."
+        
+        # Pegar TUDO entre as primeiras aspas após p= até as últimas aspas antes de )
+        PUBKEY=$(cat "$DKIM_FILE" | tr '\n' ' ' | sed 's/.*p="//; s/").*//' | tr -d ' \t"')
+        
+        echo "-> Força bruta: '${PUBKEY:0:50}...' (${#PUBKEY} chars)"
     fi
     
-    # Método 3: Se ainda não funcionou, método mais agressivo
-    if [ -z "$PUBKEY" ] || [ ${#PUBKEY} -lt 100 ]; then
-        echo "-> Tentando método 3 (mais agressivo)..."
-        PUBKEY=$(cat "$DKIM_FILE" | tr -d '\n\r\t "()' | sed 's/.*p=//; s/;.*//; s/v=DKIM1.*//; s/h=sha256.*//; s/k=rsa.*//; s/-----.*//;')
-        echo "-> Método 3 (agressivo): '${PUBKEY:0:50}...' (${#PUBKEY} chars)"
+    # Se ainda não funcionou, método linha por linha COMPLETO
+    if [ -z "$PUBKEY" ] || [ ${#PUBKEY} -lt 300 ]; then
+        echo "-> Método linha por linha completo..."
+        
+        PUBKEY=""
+        CAPTURING=false
+        
+        while IFS= read -r line; do
+            echo "Processando: $line"
+            
+            if echo "$line" | grep -q 'p='; then
+                CAPTURING=true
+                echo "  -> Iniciando captura"
+                # Pegar tudo após p="
+                part=$(echo "$line" | sed 's/.*p="//; s/".*$//')
+                PUBKEY="$PUBKEY$part"
+                echo "  -> Parte 1: '$part'"
+            elif [ "$CAPTURING" = true ]; then
+                if echo "$line" | grep -q ')'; then
+                    echo "  -> Última linha"
+                    # Última linha - pegar até "
+                    part=$(echo "$line" | sed 's/^[[:space:]]*"//; s/".*$//')
+                    PUBKEY="$PUBKEY$part"
+                    echo "  -> Parte final: '$part'"
+                    break
+                else
+                    echo "  -> Linha de continuação"
+                    # Linha de continuação
+                    part=$(echo "$line" | sed 's/^[[:space:]]*"//; s/".*$//')
+                    PUBKEY="$PUBKEY$part"
+                    echo "  -> Parte: '$part'"
+                fi
+            fi
+        done < "$DKIM_FILE"
+        
+        # Limpar espaços
+        PUBKEY=$(echo "$PUBKEY" | tr -d ' \t\n\r')
+        
+        echo "-> Linha por linha: '${PUBKEY:0:50}...' (${#PUBKEY} chars)"
     fi
-    
-    # Limpeza final
-    PUBKEY=$(echo "$PUBKEY" | sed 's/ *$//g' | tr -d ' \t\n\r')
     
     echo "-> Chave DKIM final:"
     echo "   Tamanho: ${#PUBKEY} caracteres"
-    echo "   Início: ${PUBKEY:0:50}..."
-    echo "   Final: ...${PUBKEY: -50}"
+    echo "   Completa: $PUBKEY"
     
-    # Validação
-    if [ ${#PUBKEY} -lt 100 ]; then
-        echo "❌ ERRO: Chave DKIM muito curta (${#PUBKEY} caracteres)"
-        echo "Chave extraída: '$PUBKEY'"
+    # Validação rigorosa
+    if [ ${#PUBKEY} -lt 300 ]; then
+        echo "❌ ERRO: Chave DKIM ainda está incompleta (${#PUBKEY} caracteres)"
+        echo "Esperado: ~400 caracteres para RSA 2048"
         
-        # Debug adicional
-        echo "-> Tentando debug linha por linha:"
-        while IFS= read -r line; do
-            echo "Linha: '$line'"
-            if echo "$line" | grep -q 'p='; then
-                echo "  -> Contém p=!"
-                temp=$(echo "$line" | sed 's/.*p=//; s/".*//; s/ //g')
-                echo "  -> Extraído: '$temp'"
-            fi
-        done < "$DKIM_FILE"
+        # Debug extremo
+        echo "-> Análise detalhada do arquivo:"
+        nl -ba "$DKIM_FILE"
+        
+        echo "-> Tentativa com awk:"
+        awk '
+        /p=/ { found=1; gsub(/.*p="/, ""); gsub(/".*/, ""); printf "%s", $0; next }
+        found && /^[[:space:]]*"/ { gsub(/^[[:space:]]*"/, ""); gsub(/".*/, ""); printf "%s", $0 }
+        /\$/ && found { exit }
+        ' "$DKIM_FILE"
+        echo ""
         
         exit 1
     fi
@@ -197,11 +240,14 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     if echo "$PUBKEY" | grep -q '^[A-Za-z0-9+/]*=*$'; then
         echo "✅ Chave DKIM válida (Base64, ${#PUBKEY} caracteres)"
     else
-        echo "⚠️ AVISO: Chave pode conter caracteres inválidos"
+        echo "⚠️ AVISO: Chave contém caracteres inválidos"
         echo "Chave: '$PUBKEY'"
+        # Limpar caracteres inválidos
+        PUBKEY=$(echo "$PUBKEY" | sed 's/[^A-Za-z0-9+\/=]//g')
+        echo "Chave limpa: '$PUBKEY' (${#PUBKEY} chars)"
     fi
     
-    # Obter Zone ID
+    # Resto do código do Cloudflare permanece igual...
     echo "-> Obtendo Zone ID do Cloudflare para $MAIN_DOMAIN..."
     ZONE_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$MAIN_DOMAIN&status=active" \
         -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
@@ -209,41 +255,15 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
         -H "Content-Type: application/json" | jq -r '.result[0].id // empty')
     
     if [ -z "$ZONE_ID" ] || [ "$ZONE_ID" = "null" ]; then
-        echo "⚠️ AVISO: Não foi possível obter o Zone ID para $MAIN_DOMAIN"
-        echo ""
-        echo "=== CONFIGURAÇÃO MANUAL NECESSÁRIA ==="
+        echo "⚠️ Zone ID não encontrado para $MAIN_DOMAIN"
+        echo "=== CONFIGURAÇÃO MANUAL ==="
         echo "Nome: default._domainkey.$DOMAIN"
-        echo "Tipo: TXT"
         echo "Valor: v=DKIM1; h=sha256; k=rsa; p=$PUBKEY"
-        echo "======================================"
+        echo "=========================="
     else
-        echo "✅ Zone ID obtido: $ZONE_ID"
-        
-        # Remover registros DKIM antigos
-        echo "-> Removendo registros DKIM antigos..."
-        EXISTING_RECORDS=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=default._domainkey.$DOMAIN&type=TXT" \
-            -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
-            -H "X-Auth-Key: $CLOUDFLARE_API" \
-            -H "Content-Type: application/json")
-        
-        echo "$EXISTING_RECORDS" | jq -r '.result[]?.id' 2>/dev/null | while read -r record_id; do
-            if [ -n "$record_id" ] && [ "$record_id" != "null" ]; then
-                echo "-> Deletando registro antigo: $record_id"
-                curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$record_id" \
-                    -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
-                    -H "X-Auth-Key: $CLOUDFLARE_API" > /dev/null
-            fi
-        done
-        
-        # Criar novo registro DKIM
-        echo "-> Criando novo registro DKIM..."
+        echo "✅ Zone ID: $ZONE_ID"
         
         DKIM_CONTENT="v=DKIM1; h=sha256; k=rsa; p=$PUBKEY"
-        
-        echo "-> Registro a ser criado:"
-        echo "   Nome: default._domainkey.$DOMAIN"
-        echo "   Tamanho: ${#DKIM_CONTENT} caracteres"
-        echo "   Preview: ${DKIM_CONTENT:0:100}..."
         
         RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
             -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
@@ -252,19 +272,13 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
             --data "{\"type\":\"TXT\",\"name\":\"default._domainkey.$DOMAIN\",\"content\":\"$DKIM_CONTENT\",\"ttl\":300,\"proxied\":false}")
         
         if echo "$RESPONSE" | grep -q '"success":true'; then
-            echo "✅ Registro DKIM criado com sucesso!"
-            RECORD_ID=$(echo "$RESPONSE" | jq -r '.result.id' 2>/dev/null)
-            echo "✅ ID do registro: $RECORD_ID"
-            echo "✅ Chave DKIM de ${#PUBKEY} caracteres configurada!"
+            echo "✅ DKIM configurado com sucesso! (${#PUBKEY} caracteres)"
         else
-            echo "❌ Erro ao criar registro DKIM:"
-            echo "$RESPONSE"
+            echo "❌ Erro: $RESPONSE"
         fi
     fi
     
-    echo "✅ Configuração DNS finalizada!"
-else
-    echo "⚠️ Credenciais do Cloudflare não fornecidas."
+    echo "✅ Configuração finalizada!"
 fi
 # ==============================================================================
 # 10. FINALIZAÇÃO
