@@ -132,6 +132,8 @@ echo "-> Configurando logging de email..."
     
 ) || echo "⚠️ Aviso: Problema na configuração de logging (não crítico)"
 
+#!/bin/bash
+
 # ==============================================================================
 # 9. CONFIGURAÇÃO CLOUDFLARE DNS (VERSÃO FINAL CORRIGIDA)
 # ==============================================================================
@@ -150,35 +152,54 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     cat "$DKIM_FILE"
     echo "================================"
     
-    # Método DEFINITIVO baseado na análise do FileZilla
-    echo "-> Extraindo código DKIM (método definitivo)..."
+    # MÉTODO CORRIGIDO - Extrair apenas a chave pública RSA
+    echo "-> Extraindo código DKIM (método corrigido)..."
     
-    # Pegar linhas 2 e 3, extrair entre p=" e " antes do )
-    DKIMCode=$(sed -n '2,3p' "$DKIM_FILE" | tr -d '\n' | sed 's/.*p="//; s/").*//' | tr -d ' \t"')
+    # Primeiro, vamos capturar todo o conteúdo entre as aspas
+    # Remover primeira linha com o cabeçalho, depois juntar tudo
+    DKIMCode=$(grep -v "^default._domainkey" "$DKIM_FILE" | \
+               sed 's/^[[:space:]]*"//' | \
+               sed 's/"[[:space:]]*).*//' | \
+               sed 's/"$//' | \
+               tr -d '\n' | \
+               tr -d ' \t')
     
-    echo "-> Chave bruta extraída: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
-    echo "-> Final da chave bruta: ...${DKIMCode: -50}"
+    echo "-> Chave extraída inicial: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
     
-    # Remover p= do início se existir
-    if echo "$DKIMCode" | grep -q '^p='; then
-        DKIMCode=$(echo "$DKIMCode" | sed 's/^p=//')
-        echo "-> Após remover p= inicial: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
+    # Remover o prefixo "v=DKIM1; h=sha256; k=rsa; " se existir
+    DKIMCode=$(echo "$DKIMCode" | sed 's/^v=DKIM1;[^p]*p=//')
+    
+    # Se ainda tiver "p=" no início, remover
+    DKIMCode=$(echo "$DKIMCode" | sed 's/^p=//')
+    
+    echo "-> Após remover prefixos: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
+    
+    # IMPORTANTE: Cortar no IDAQAB (fim da chave RSA)
+    # A chave RSA sempre termina com IDAQAB, IQAB, EQAB ou similar
+    if echo "$DKIMCode" | grep -q 'DAQAB'; then
+        DKIMCode=$(echo "$DKIMCode" | sed 's/\(.*DAQAB\).*/\1/')
+        echo "-> Cortado em DAQAB"
+    elif echo "$DKIMCode" | grep -q 'IDAQAB'; then
+        DKIMCode=$(echo "$DKIMCode" | sed 's/\(.*IDAQAB\).*/\1/')
+        echo "-> Cortado em IDAQAB"
+    elif echo "$DKIMCode" | grep -q 'IQAB'; then
+        DKIMCode=$(echo "$DKIMCode" | sed 's/\(.*IQAB\).*/\1/')
+        echo "-> Cortado em IQAB"
+    elif echo "$DKIMCode" | grep -q 'EQAB'; then
+        DKIMCode=$(echo "$DKIMCode" | sed 's/\(.*EQAB\).*/\1/')
+        echo "-> Cortado em EQAB"
+    elif echo "$DKIMCode" | grep -q 'AQAB'; then
+        DKIMCode=$(echo "$DKIMCode" | sed 's/\(.*AQAB\).*/\1/')
+        echo "-> Cortado em AQAB"
     fi
     
-    # Cortar no final de AQAB (fim típico de chaves RSA)
-    if echo "$DKIMCode" | grep -q 'AQAB'; then
-        DKIMCode=$(echo "$DKIMCode" | sed 's/\$.*AQAB\$.*/\1/')
-        echo "-> Após cortar em AQAB: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
-    fi
-    
-    # Limpeza final - manter apenas caracteres Base64 válidos
+    # Limpeza final - garantir apenas caracteres Base64 válidos
     DKIMCode=$(echo "$DKIMCode" | sed 's/[^A-Za-z0-9+\/=]//g')
     
     echo "-> Código DKIM final:"
     echo "   Tamanho: ${#DKIMCode} caracteres"
     echo "   Início: ${DKIMCode:0:50}..."
     echo "   Final: ...${DKIMCode: -50}"
-    echo "   Completo: $DKIMCode"
     
     # Validação
     if [ ${#DKIMCode} -lt 300 ]; then
@@ -187,11 +208,12 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     fi
     
     # Verificar se é Base64 válido
-    if echo "$DKIMCode" | grep -q '^[A-Za-z0-9+/]*=*$'; then
+    if echo "$DKIMCode" | grep -qE '^[A-Za-z0-9+/]*=*$'; then
         echo "✅ Chave DKIM válida (${#DKIMCode} caracteres)"
     else
-        echo "❌ ERRO: Chave ainda contém caracteres inválidos"
-        echo "Chave: '$DKIMCode'"
+        echo "❌ ERRO: Chave contém caracteres inválidos"
+        echo "Caracteres inválidos encontrados:"
+        echo "$DKIMCode" | sed 's/[A-Za-z0-9+\/=]//g' | od -c
         exit 1
     fi
     
@@ -205,16 +227,19 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     if [ -z "$ZONE_ID" ] || [ "$ZONE_ID" = "null" ]; then
         echo "⚠️ Zone ID não encontrado para $MAIN_DOMAIN"
         echo ""
-        echo "=== CONFIGURAÇÃO MANUAL ==="
+        echo "=== CONFIGURAÇÃO MANUAL DO DNS ==="
+        echo "Adicione o seguinte registro TXT no seu DNS:"
+        echo ""
         echo "Nome: default._domainkey.$DOMAIN"
         echo "Tipo: TXT"
         echo "Valor: v=DKIM1; h=sha256; k=rsa; p=$DKIMCode"
-        echo "=========================="
+        echo "TTL: 300 (ou Auto)"
+        echo "=================================="
     else
         echo "✅ Zone ID obtido: $ZONE_ID"
         
         # Remover registros DKIM antigos
-        echo "-> Removendo registros DKIM antigos..."
+        echo "-> Verificando registros DKIM existentes..."
         EXISTING=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=default._domainkey.$DOMAIN&type=TXT" \
             -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
             -H "X-Auth-Key: $CLOUDFLARE_API" \
@@ -229,46 +254,96 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
             fi
         done
         
-        sleep 3
+        sleep 2
         
-        # Criar registro DKIM limpo
-        echo "-> Criando registro DKIM limpo..."
+        # Criar registro DKIM
+        echo "-> Criando novo registro DKIM..."
         
         DKIM_CONTENT="v=DKIM1; h=sha256; k=rsa; p=$DKIMCode"
         
-        echo "-> Registro final:"
+        echo "-> Detalhes do registro:"
         echo "   Nome: default._domainkey.$DOMAIN"
-        echo "   Tamanho: ${#DKIM_CONTENT} caracteres"
-        echo "   Conteúdo: ${DKIM_CONTENT:0:100}..."
+        echo "   Tipo: TXT"
+        echo "   Tamanho total: ${#DKIM_CONTENT} caracteres"
         
         RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
             -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
             -H "X-Auth-Key: $CLOUDFLARE_API" \
             -H "Content-Type: application/json" \
-            --data "{\"type\":\"TXT\",\"name\":\"default._domainkey.$DOMAIN\",\"content\":\"$DKIM_CONTENT\",\"ttl\":300,\"proxied\":false}")
+            --data "{
+                \"type\": \"TXT\",
+                \"name\": \"default._domainkey.$DOMAIN\",
+                \"content\": \"$DKIM_CONTENT\",
+                \"ttl\": 300,
+                \"proxied\": false
+            }")
         
         if echo "$RESPONSE" | jq -r '.success' | grep -q "true"; then
-            echo "✅ DKIM configurado com sucesso!"
-            echo "✅ Chave limpa de ${#DKIMCode} caracteres"
+            echo "✅ DKIM configurado com sucesso no Cloudflare!"
             RECORD_ID=$(echo "$RESPONSE" | jq -r '.result.id' 2>/dev/null)
             echo "✅ ID do registro: $RECORD_ID"
             
             # Verificar o registro criado
+            echo "-> Verificando registro criado..."
+            sleep 2
+            
             VERIFY=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
                 -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
                 -H "X-Auth-Key: $CLOUDFLARE_API" \
                 -H "Content-Type: application/json")
             
-            CREATED_CONTENT=$(echo "$VERIFY" | jq -r '.result.content' 2>/dev/null)
-            echo "✅ Registro criado: ${CREATED_CONTENT:0:100}..."
+            CREATED_NAME=$(echo "$VERIFY" | jq -r '.result.name' 2>/dev/null)
+            CREATED_TYPE=$(echo "$VERIFY" | jq -r '.result.type' 2>/dev/null)
+            
+            echo "✅ Registro verificado:"
+            echo "   Nome: $CREATED_NAME"
+            echo "   Tipo: $CREATED_TYPE"
             
         else
-            echo "❌ Erro ao criar registro:"
-            echo "$RESPONSE"
+            echo "❌ Erro ao criar registro DKIM:"
+            echo "$RESPONSE" | jq '.'
+            
+            ERROR_MSG=$(echo "$RESPONSE" | jq -r '.errors[0].message' 2>/dev/null)
+            if [ -n "$ERROR_MSG" ] && [ "$ERROR_MSG" != "null" ]; then
+                echo "❌ Mensagem de erro: $ERROR_MSG"
+            fi
+            
+            echo ""
+            echo "=== CONFIGURAÇÃO MANUAL NECESSÁRIA ==="
+            echo "Configure manualmente no Cloudflare:"
+            echo "Nome: default._domainkey.$DOMAIN"
+            echo "Tipo: TXT"
+            echo "Valor: v=DKIM1; h=sha256; k=rsa; p=$DKIMCode"
+            echo "======================================"
         fi
     fi
     
-    echo "✅ Configuração DNS finalizada!"
+    echo "✅ Processo de configuração DNS finalizado!"
+else
+    echo "⚠️ Variáveis CLOUDFLARE_API ou CLOUDFLARE_EMAIL não definidas"
+    echo "⚠️ Pulando configuração automática do DNS"
+fi
+
+# Teste de validação da chave DKIM
+echo ""
+echo "-> Testando formato da chave DKIM..."
+if [ -n "$DKIMCode" ]; then
+    # Verificar se termina corretamente (com AQAB, IQAB, EQAB, DAQAB, IDAQAB)
+    if echo "$DKIMCode" | grep -qE '(AQAB|IQAB|EQAB|DAQAB|IDAQAB)$'; then
+        echo "✅ Chave DKIM tem terminação válida"
+    else
+        echo "⚠️ AVISO: Chave DKIM pode não ter terminação padrão RSA"
+        echo "   Final da chave: ...${DKIMCode: -20}"
+    fi
+    
+    # Verificar tamanho típico (geralmente entre 350-450 caracteres para RSA 2048)
+    KEY_LEN=${#DKIMCode}
+    if [ $KEY_LEN -ge 350 ] && [ $KEY_LEN -le 450 ]; then
+        echo "✅ Tamanho da chave DKIM está dentro do esperado ($KEY_LEN caracteres)"
+    else
+        echo "⚠️ Tamanho da chave DKIM incomum: $KEY_LEN caracteres"
+        echo "   (Esperado: 350-450 para RSA 2048)"
+    fi
 fi
 # ==============================================================================
 # 10. FINALIZAÇÃO
