@@ -103,12 +103,18 @@ echo "-> Instalando e configurando servidor de email..."
 ) || log_error "Configuração do Servidor de Email"
 
 # ==============================================================================
-# 8.1. CONFIGURAÇÃO DE LOGGING DE EMAIL
+# 8.1. CONFIGURAÇÃO DE LOGGING DE EMAIL (CORRIGIDO)
 # ==============================================================================
 echo "-> Configurando logging de email..."
 (
+    # Instalar rsyslog se não existir
+    if ! systemctl is-active --quiet rsyslog; then
+        echo "-> Instalando rsyslog..."
+        apt-get install -y rsyslog
+    fi
+    
     # Configurar rsyslog para email
-    if ! grep -q "mail.*" /etc/rsyslog.conf; then
+    if ! grep -q "mail.*" /etc/rsyslog.conf 2>/dev/null; then
         echo "" >> /etc/rsyslog.conf
         echo "# Email logging configuration" >> /etc/rsyslog.conf
         echo "mail.*                          /var/log/maillog" >> /etc/rsyslog.conf
@@ -120,7 +126,9 @@ echo "-> Configurando logging de email..."
     # Criar arquivos de log
     touch /var/log/maillog /var/log/mail.info /var/log/mail.warn /var/log/mail.err
     chmod 640 /var/log/maillog /var/log/mail.*
-    chown syslog:adm /var/log/maillog /var/log/mail.*
+    
+    # Usar root:root ao invés de syslog:adm (que pode não existir)
+    chown root:root /var/log/maillog /var/log/mail.*
     
     # Adicionar configurações de logging no Postfix
     echo "
@@ -130,50 +138,73 @@ syslog_name = postfix
 " >> /etc/postfix/main.cf
     
     # Reiniciar serviços
+    systemctl enable rsyslog
     systemctl restart rsyslog
     systemctl restart postfix
     
     echo "✅ Logging configurado - arquivos criados:"
     ls -la /var/log/mail*
     
-) || log_error "Configuração de Logging de Email"
+) || echo "⚠️ Aviso: Problema na configuração de logging (não crítico)"
 
 # ==============================================================================
-# 9. CONFIGURAÇÃO CLOUDFLARE DNS
+# 9. CONFIGURAÇÃO CLOUDFLARE DNS (CORRIGIDO)
 # ==============================================================================
 if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     echo "-> Configurando DNS no Cloudflare..."
     
-    # Extrair código DKIM (método melhorado)
+    # Extrair código DKIM (método corrigido)
     echo "-> Extraindo código DKIM..."
     DKIM_RECORD=$(cat /etc/opendkim/keys/default.txt)
     
-    # Método mais robusto para extrair o código DKIM completo
+    # Método 1: Extração simples (corrigido)
     DKIM_CODE=$(echo "$DKIM_RECORD" | sed -n 's/.*p=\$[^"]*\$.*/\1/p' | tr -d ' \t\n\r")')
     
-    # Se o método acima falhar, usar método alternativo
-    if [ -z "$DKIM_CODE" ]; then
-        echo "-> Tentando método alternativo de extração..."
-        DKIM_CODE=$(grep -oP 'p=\K[^"]*' /etc/opendkim/keys/default.txt | tr -d ' \t\n\r")')
+    # Se falhar, método 2: grep
+    if [ -z "$DKIM_CODE" ] || [ ${#DKIM_CODE} -lt 100 ]; then
+        echo "-> Tentando método alternativo..."
+        DKIM_CODE=$(grep -o 'p=[^"]*' /etc/opendkim/keys/default.txt | cut -d'=' -f2- | tr -d ' \t\n\r")')
     fi
     
-    # Se ainda estiver vazio, extrair manualmente linha por linha
-    if [ -z "$DKIM_CODE" ]; then
-        echo "-> Extraindo manualmente..."
-        DKIM_CODE=$(awk '/p=/{gsub(/[" \t\n\r\$]/,""); gsub(/.*p=/,""); print}' /etc/opendkim/keys/default.txt | tr -d '\n')
+    # Se ainda falhar, método 3: awk
+    if [ -z "$DKIM_CODE" ] || [ ${#DKIM_CODE} -lt 100 ]; then
+        echo "-> Tentando método manual..."
+        DKIM_CODE=$(awk '
+        /p=/ {
+            # Encontrou linha com p=
+            gsub(/.*p=/, "")  # Remove tudo antes de p=
+            gsub(/[" \t\r\n\$]/, "")  # Remove aspas, espaços, quebras e parênteses
+            printf "%s", $0
+        }
+        !/p=/ && /^[[:space:]]*"/ {
+            # Linhas de continuação (começam com aspas)
+            gsub(/[" \t\r\n\$]/, "")
+            printf "%s", $0
+        }' /etc/opendkim/keys/default.txt)
     fi
     
     echo "-> Código DKIM extraído (${#DKIM_CODE} caracteres): ${DKIM_CODE:0:50}...${DKIM_CODE: -20}"
     
     # Verificar se o código tem tamanho adequado
-    if [ ${#DKIM_CODE} -lt 300 ]; then
+    if [ ${#DKIM_CODE} -lt 200 ]; then
         echo "⚠️ AVISO: Código DKIM parece estar incompleto (${#DKIM_CODE} caracteres)"
-        echo "Conteúdo completo do arquivo default.txt:"
+        echo "Conteúdo do arquivo default.txt:"
         cat /etc/opendkim/keys/default.txt
-        echo "Tentando extração completa..."
-        # Extrair tudo entre aspas após p=
-        DKIM_CODE=$(sed -n '/p=/,/)/{s/.*p=//;s/[" \t\n\r)]//g;p}' /etc/opendkim/keys/default.txt | tr -d '\n')
-        echo "Nova tentativa: ${#DKIM_CODE} caracteres"
+        echo "=== Tentando extração linha por linha ==="
+        
+        # Método 4: Extração linha por linha
+        DKIM_CODE=""
+        while IFS= read -r line; do
+            if [[ $line == *"p="* ]]; then
+                # Primeira linha com p=
+                DKIM_CODE=$(echo "$line" | sed 's/.*p=//' | tr -d ' \t\r\n")')
+            elif [[ $line == *"\""* ]] && [[ -n $DKIM_CODE ]]; then
+                # Linhas de continuação
+                DKIM_CODE="$DKIM_CODE$(echo "$line" | tr -d ' \t\r\n")')"
+            fi
+        done < /etc/opendkim/keys/default.txt
+        
+        echo "Extração final: ${#DKIM_CODE} caracteres"
     fi
     
     # Obter Zone ID
@@ -189,7 +220,7 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     else
         echo "✅ Zone ID obtido: $ZONE_ID"
         
-        # Cadastrar registro DKIM com tratamento para chaves longas
+        # Cadastrar registro DKIM
         echo "-> Cadastrando registro DKIM..."
         
         # Preparar conteúdo do registro DKIM
@@ -204,13 +235,13 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
             --data "{\"type\":\"TXT\",\"name\":\"default._domainkey.$DOMAIN\",\"content\":\"$DKIM_CONTENT\",\"ttl\":300,\"proxied\":false}")
         
         # Verificar se houve sucesso
-        if echo "$RESPONSE" | jq -r '.success' | grep -q "true"; then
+        if echo "$RESPONSE" | jq -r '.success' 2>/dev/null | grep -q "true"; then
             echo "✅ Registro DKIM criado com sucesso no Cloudflare!"
             echo "Nome: default._domainkey.$DOMAIN"
             echo "Tamanho da chave: ${#DKIM_CODE} caracteres"
         else
             echo "❌ Erro ao criar registro DKIM:"
-            echo "$RESPONSE" | jq -r '.errors[]?.message // "Erro desconhecido"'
+            echo "$RESPONSE"
             echo ""
             echo "=== REGISTRO DKIM PARA CONFIGURAÇÃO MANUAL ==="
             echo "Nome: default._domainkey.$DOMAIN"
