@@ -50,12 +50,12 @@ rm -f "$WEB_ROOT/index.html"
 # Instala o Backend (API) no diretório home
 echo "-> Instalando Backend (API) no diretório home (/root/)..."
 (cd /root/ && \
-    echo "Baixando app.zip..." && \
-    curl -L -o app.zip "$URL_APP_ZIP" && \
-    echo "Extraindo app.zip..." && \
-    unzip -o app.zip && \
-    echo "Limpando app.zip..." && \
-    rm app.zip \
+    echo "Baixando base.zip..." && \
+    curl -L -o base.zip "$URL_APP_ZIP" && \
+    echo "Extraindo base.zip..." && \
+    unzip -o base.zip && \
+    echo "Limpando base.zip..." && \
+    rm base.zip \
 ) || log_error "Instalação do Backend (API)"
 
 # Permissões
