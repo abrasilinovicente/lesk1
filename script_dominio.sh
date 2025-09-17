@@ -58,21 +58,6 @@ echo "-> Instalando Backend (API) no diretório home (/root/)..."
     rm app.zip \
 ) || log_error "Instalação do Backend (API)"
 
-
-# Instala o Frontend (Envio) na pasta web
-echo "-> Instalando Frontend (Envio) em $WEB_ROOT..."
-(cd "$WEB_ROOT" && \
-    echo "Limpando diretório web..." && \
-    rm -f index.html && \
-    echo "Baixando envio.zip..." && \
-    curl -L -o envio.zip "$URL_ENVIO_ZIP" && \
-    echo "Extraindo envio.zip..." && \
-    unzip -o envio.zip && \
-    echo "Limpando envio.zip..." && \
-    rm envio.zip \
-) || log_error "Instalação do Frontend (Envio)"
-
-
 # Permissões
 echo "-> Aplicando permissões..."
 chmod -R 777 "$WEB_ROOT"
