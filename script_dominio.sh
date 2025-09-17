@@ -103,14 +103,14 @@ echo "-> Instalando e configurando servidor de email..."
 ) || log_error "Configuração do Servidor de Email"
 
 # ==============================================================================
-# 8.1. CONFIGURAÇÃO DE LOGGING DE EMAIL (SIMPLIFICADO)
+# 8.1. CONFIGURAÇÃO DE LOGGING DE EMAIL (CORRIGIDO)
 # ==============================================================================
 echo "-> Configurando logging de email..."
 (
     # Instalar rsyslog se necessário
     if ! command -v rsyslogd >/dev/null 2>&1; then
         echo "-> Instalando rsyslog..."
-        apt-get install -y rsyslog
+        DEBIAN_FRONTEND=noninteractive apt-get install -y rsyslog
         systemctl enable rsyslog
         systemctl start rsyslog
     fi
@@ -133,12 +133,12 @@ echo "-> Configurando logging de email..."
 ) || echo "⚠️ Aviso: Problema na configuração de logging (não crítico)"
 
 # ==============================================================================
-# 9. CONFIGURAÇÃO CLOUDFLARE DNS (MÉTODO SIMPLES E ROBUSTO)
+# 9. CONFIGURAÇÃO CLOUDFLARE DNS
 # ==============================================================================
 if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     echo "-> Configurando DNS no Cloudflare..."
     
-    # Extrair código DKIM (método mais simples e robusto)
+    # Extrair código DKIM
     echo "-> Extraindo código DKIM..."
     
     # Método 1: Usar grep simples
@@ -150,24 +150,21 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
         DKIM_CODE=$(awk '/p=/ {gsub(/.*p=/, ""); gsub(/[" \t\r\n\$]/, ""); printf "%s", $0}' /etc/opendkim/keys/default.txt)
     fi
     
-    # Se ainda não funcionou, método 3: extração manual linha por linha
+    # Se ainda não funcionou, método 3: extração manual
     if [ -z "$DKIM_CODE" ] || [ ${#DKIM_CODE} -lt 100 ]; then
         echo "-> Tentando extração manual..."
         DKIM_CODE=""
         FOUND_P=false
         
         while IFS= read -r line; do
-            if [[ $line == *"p="* ]]; then
+            if echo "$line" | grep -q "p="; then
                 FOUND_P=true
-                # Extrair tudo após p=
                 temp=$(echo "$line" | cut -d'=' -f2- | tr -d ' \t\r\n")')
                 DKIM_CODE="$DKIM_CODE$temp"
-            elif [[ $FOUND_P == true ]] && [[ $line == *"\""* ]]; then
-                # Linha de continuação
+            elif [ "$FOUND_P" = true ] && echo "$line" | grep -q '"'; then
                 temp=$(echo "$line" | tr -d ' \t\r\n")')
                 DKIM_CODE="$DKIM_CODE$temp"
-            elif [[ $line == *")"* ]]; then
-                # Fim do registro
+            elif echo "$line" | grep -q ")"; then
                 break
             fi
         done < /etc/opendkim/keys/default.txt
@@ -195,11 +192,7 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     
     if [ -z "$ZONE_ID" ] || [ "$ZONE_ID" = "null" ]; then
         echo "⚠️ AVISO: Não foi possível obter o Zone ID para $MAIN_DOMAIN"
-        echo "Resposta da API:"
-        curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$MAIN_DOMAIN&status=active" \
-            -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
-            -H "X-Auth-Key: $CLOUDFLARE_API" \
-            -H "Content-Type: application/json"
+        echo "Verifique se o domínio está no Cloudflare e as credenciais estão corretas."
     else
         echo "✅ Zone ID obtido: $ZONE_ID"
         
