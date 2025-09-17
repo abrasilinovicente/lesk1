@@ -133,80 +133,77 @@ echo "-> Configurando logging de email..."
 ) || echo "⚠️ Aviso: Problema na configuração de logging (não crítico)"
 
 # ==============================================================================
-# 9. CONFIGURAÇÃO CLOUDFLARE DNS (EXTRAÇÃO DKIM CORRIGIDA)
+# 9. CONFIGURAÇÃO CLOUDFLARE DNS (EXTRAÇÃO DKIM LIMPA)
 # ==============================================================================
 if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     echo "-> Configurando DNS no Cloudflare..."
     
-    # Extrair código DKIM (método corrigido para múltiplas linhas)
+    # Extrair código DKIM (método limpo e preciso)
     echo "-> Extraindo código DKIM completo..."
     
-    # Método robusto: extrair todas as linhas com p= e continuações
+    # Método mais preciso: extrair apenas o conteúdo entre aspas após p=
     DKIM_CODE=$(awk '
-    BEGIN { in_p = 0; dkim = "" }
-    /p=/ { 
-        in_p = 1
-        # Extrair tudo após p=
-        gsub(/.*p=/, "")
-        gsub(/[" \t\r\n]/, "")
-        dkim = dkim $0
-        next
+    BEGIN { dkim = "" }
+    /p=/ {
+        # Encontrou linha com p=, extrair tudo após p= até a primeira aspa de fechamento
+        match($0, /p="([^"]*)"/, arr)
+        if (arr[1]) dkim = dkim arr[1]
+        # Se não encontrou aspas na mesma linha, continuar nas próximas
+        if (!arr[1]) {
+            gsub(/.*p="/, "")
+            gsub(/".*/, "")
+            dkim = dkim $0
+        }
     }
-    in_p && /^[[:space:]]*"/ {
-        # Linhas de continuação (começam com aspas)
-        gsub(/[" \t\r\n\$]/, "")
+    /^[[:space:]]*"[^"]*"/ && dkim != "" {
+        # Linhas de continuação com aspas
+        gsub(/^[[:space:]]*"/, "")
+        gsub(/".*/, "")
         dkim = dkim $0
-        if (/\$/) in_p = 0  # Fim do registro
     }
-    END { print dkim }
+    END { 
+        # Limpar qualquer caractere inválido
+        gsub(/[^A-Za-z0-9+\/=]/, "", dkim)
+        print dkim 
+    }
     ' /etc/opendkim/keys/default.txt)
+    
+    # Se o método acima não funcionou, usar método manual mais limpo
+    if [ -z "$DKIM_CODE" ] || [ ${#DKIM_CODE} -lt 300 ]; then
+        echo "-> Usando método manual limpo..."
+        
+        # Extrair apenas o que está entre aspas, linha por linha
+        DKIM_CODE=""
+        while IFS= read -r line; do
+            if echo "$line" | grep -q 'p='; then
+                # Primeira linha com p= - extrair tudo entre aspas
+                temp=$(echo "$line" | sed 's/.*p="//; s/".*//')
+                DKIM_CODE="$DKIM_CODE$temp"
+            elif echo "$line" | grep -q '^[[:space:]]*".*"'; then
+                # Linhas de continuação - extrair apenas o que está entre aspas
+                temp=$(echo "$line" | sed 's/^[[:space:]]*"//; s/".*//')
+                DKIM_CODE="$DKIM_CODE$temp"
+            fi
+        done < /etc/opendkim/keys/default.txt
+        
+        # Limpar caracteres inválidos (manter apenas Base64 válidos)
+        DKIM_CODE=$(echo "$DKIM_CODE" | tr -d ' \t\n\r' | sed 's/[^A-Za-z0-9+\/=]//g')
+    fi
     
     echo "-> Código DKIM extraído (${#DKIM_CODE} caracteres)"
     echo "-> Início: ${DKIM_CODE:0:50}..."
     echo "-> Final: ...${DKIM_CODE: -50}"
     
-    # Verificar se a chave está completa (chaves RSA 2048 bits têm ~350+ caracteres)
-    if [ ${#DKIM_CODE} -lt 300 ]; then
-        echo "⚠️ AVISO: Código DKIM ainda parece incompleto (${#DKIM_CODE} caracteres)"
-        echo "Tentando método alternativo..."
-        
-        # Método alternativo: sed para múltiplas linhas
-        DKIM_CODE=$(sed -n '/p=/,/)/{s/.*p=//;s/[" \t\r\n)]//g;p}' /etc/opendkim/keys/default.txt | tr -d '\n')
-        echo "-> Método alternativo: ${#DKIM_CODE} caracteres"
+    # Validar se a chave parece ser Base64 válida
+    if echo "$DKIM_CODE" | grep -q '^[A-Za-z0-9+/]*=*$' && [ ${#DKIM_CODE} -gt 300 ]; then
+        echo "✅ Chave DKIM parece válida (Base64, ${#DKIM_CODE} caracteres)"
+    else
+        echo "⚠️ AVISO: Chave DKIM pode estar inválida"
+        echo "Conteúdo extraído: $DKIM_CODE"
+        echo ""
+        echo "Arquivo original:"
+        cat /etc/opendkim/keys/default.txt
     fi
-    
-    # Se ainda não estiver completo, método manual linha por linha
-    if [ ${#DKIM_CODE} -lt 300 ]; then
-        echo "-> Usando método manual linha por linha..."
-        DKIM_CODE=""
-        FOUND_P=false
-        
-        while IFS= read -r line; do
-            if echo "$line" | grep -q "p="; then
-                FOUND_P=true
-                # Extrair tudo após p= e remover aspas/espaços
-                temp=$(echo "$line" | sed 's/.*p=//' | tr -d ' \t\r\n"')
-                DKIM_CODE="$DKIM_CODE$temp"
-            elif [ "$FOUND_P" = true ]; then
-                if echo "$line" | grep -q ")"; then
-                    # Última linha - extrair até o parêntese
-                    temp=$(echo "$line" | sed 's/).*//' | tr -d ' \t\r\n"')
-                    DKIM_CODE="$DKIM_CODE$temp"
-                    break
-                else
-                    # Linha de continuação
-                    temp=$(echo "$line" | tr -d ' \t\r\n"')
-                    DKIM_CODE="$DKIM_CODE$temp"
-                fi
-            fi
-        done < /etc/opendkim/keys/default.txt
-        
-        echo "-> Método manual: ${#DKIM_CODE} caracteres"
-    fi
-    
-    echo "-> DKIM FINAL (${#DKIM_CODE} caracteres):"
-    echo "   Início: ${DKIM_CODE:0:80}..."
-    echo "   Final: ...${DKIM_CODE: -80}"
     
     # Obter Zone ID
     echo "-> Obtendo Zone ID do Cloudflare para $MAIN_DOMAIN..."
@@ -217,8 +214,6 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     
     if [ -z "$ZONE_ID" ] || [ "$ZONE_ID" = "null" ]; then
         echo "⚠️ AVISO: Não foi possível obter o Zone ID para $MAIN_DOMAIN"
-        echo "Verifique se o domínio está no Cloudflare e as credenciais estão corretas."
-        
         echo ""
         echo "=== CONFIGURAÇÃO MANUAL NECESSÁRIA ==="
         echo "Nome: default._domainkey.$DOMAIN"
@@ -228,15 +223,33 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     else
         echo "✅ Zone ID obtido: $ZONE_ID"
         
-        # Cadastrar registro DKIM
-        echo "-> Cadastrando registro DKIM..."
+        # Primeiro, tentar deletar registro existente (se houver)
+        echo "-> Verificando registros DKIM existentes..."
+        EXISTING_RECORDS=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=default._domainkey.$DOMAIN&type=TXT" \
+            -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
+            -H "X-Auth-Key: $CLOUDFLARE_API" \
+            -H "Content-Type: application/json")
         
-        # Preparar conteúdo do registro DKIM
+        # Deletar registros existentes
+        echo "$EXISTING_RECORDS" | jq -r '.result[].id' | while read -r record_id; do
+            if [ -n "$record_id" ] && [ "$record_id" != "null" ]; then
+                echo "-> Deletando registro DKIM existente: $record_id"
+                curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$record_id" \
+                    -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
+                    -H "X-Auth-Key: $CLOUDFLARE_API" > /dev/null
+            fi
+        done
+        
+        # Cadastrar novo registro DKIM (limpo)
+        echo "-> Cadastrando novo registro DKIM..."
+        
+        # Preparar conteúdo do registro DKIM (SEM caracteres extras)
         DKIM_CONTENT="v=DKIM1; h=sha256; k=rsa; p=$DKIM_CODE"
         
         echo "-> Criando registro TXT:"
         echo "   Nome: default._domainkey.$DOMAIN"
-        echo "   Tamanho total: ${#DKIM_CONTENT} caracteres"
+        echo "   Tamanho: ${#DKIM_CONTENT} caracteres"
+        echo "   Conteúdo: ${DKIM_CONTENT:0:100}..."
         
         # Fazer a requisição
         RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
@@ -248,22 +261,20 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
         # Verificar se houve sucesso
         if echo "$RESPONSE" | grep -q '"success":true'; then
             echo "✅ Registro DKIM criado com sucesso no Cloudflare!"
-            echo "✅ Chave DKIM completa de ${#DKIM_CODE} caracteres foi configurada!"
+            echo "✅ Chave DKIM limpa de ${#DKIM_CODE} caracteres configurada!"
+            
+            # Mostrar o registro criado
+            RECORD_ID=$(echo "$RESPONSE" | jq -r '.result.id')
+            echo "✅ ID do registro: $RECORD_ID"
         else
             echo "❌ Erro ao criar registro DKIM:"
             echo "$RESPONSE"
-            echo ""
-            echo "=== CONFIGURAÇÃO MANUAL NECESSÁRIA ==="
-            echo "Nome: default._domainkey.$DOMAIN"
-            echo "Tipo: TXT"
-            echo "Valor: $DKIM_CONTENT"
-            echo "======================================"
         fi
     fi
     
     echo "✅ Configuração DNS finalizada!"
 else
-    echo "⚠️ Credenciais do Cloudflare não fornecidas. Pulando configuração DNS automática."
+    echo "⚠️ Credenciais do Cloudflare não fornecidas."
 fi
 # ==============================================================================
 # 10. FINALIZAÇÃO
