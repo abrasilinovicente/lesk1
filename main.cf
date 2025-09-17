@@ -27,6 +27,12 @@ relayhost =
 inet_interfaces = all
 inet_protocols = ipv4
 
+# Configurações de logging
+maillog_file = /var/log/postfix.log
+maillog_file_prefixes = /var/log
+maillog_file_rotate_suffix = %Y%m%d-%H%M%S
+maillog_file_compressor = gzip
+
 # --- ConfiguraÃ§Ãµes de Relay e RestriÃ§Ãµes (CORRIGIDO) ---
 # A linha abaixo corrige o erro fatal e define uma polÃ­tica de relay segura.
 smtpd_relay_restrictions =
