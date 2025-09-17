@@ -133,7 +133,7 @@ echo "-> Configurando logging de email..."
 ) || echo "⚠️ Aviso: Problema na configuração de logging (não crítico)"
 
 # ==============================================================================
-# 9. CONFIGURAÇÃO CLOUDFLARE DNS (MÉTODO SIMPLES E EFICAZ)
+# 9. CONFIGURAÇÃO CLOUDFLARE DNS (CAPTURA MÚLTIPLAS LINHAS)
 # ==============================================================================
 if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     echo "-> Configurando DNS no Cloudflare..."
@@ -150,71 +150,85 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     cat "$DKIM_FILE"
     echo "================================"
     
-    # Usar seu método simples e eficaz
-    echo "-> Extraindo código DKIM (método simples)..."
+    # Método CORRETO: capturar TODAS as linhas com aspas
+    echo "-> Extraindo código DKIM completo (todas as linhas)..."
     
-    # Extrair apenas a parte da chave pública
-    DKIMCode=$(grep -A 10 'p=' "$DKIM_FILE" | grep -v '; -----' | tr -d '\n\r\t "()' | sed 's/.*p=//; s/;.*//; s/v=DKIM1.*//; s/h=sha256.*//; s/k=rsa.*//;')
+    # Método 1: Pegar todas as linhas que contêm aspas duplas (exceto comentários)
+    DKIMCode=$(grep '"' "$DKIM_FILE" | grep -v '; -----' | sed 's/.*"//; s/".*//' | tr -d ' \t\n\r' | sed 's/.*p=//; s/v=DKIM1.*//; s/h=sha256.*//; s/k=rsa.*//;')
     
-    echo "-> Primeira tentativa: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
+    echo "-> Método 1 (grep aspas): '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
     
-    # Se não funcionou, método mais direto
-    if [ -z "$DKIMCode" ] || [ ${#DKIMCode} -lt 100 ]; then
-        echo "-> Tentando método alternativo..."
+    # Método 2: Se não funcionou, capturar linha por linha
+    if [ -z "$DKIMCode" ] || [ ${#DKIMCode} -lt 300 ]; then
+        echo "-> Método 2 (linha por linha)..."
         
-        # Pegar todas as linhas com aspas, remover tudo exceto a chave
-        DKIMCode=$(cat "$DKIM_FILE" | grep '"' | grep -v '; -----' | tr -d '"' | tr -d ' \t\n\r' | sed 's/.*p=//; s/v=DKIM1.*//; s/h=sha256.*//; s/k=rsa.*//;')
-        
-        echo "-> Segunda tentativa: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
-    fi
-    
-    # Se ainda não funcionou, método de força bruta
-    if [ -z "$DKIMCode" ] || [ ${#DKIMCode} -lt 100 ]; then
-        echo "-> Método de força bruta..."
-        
-        # Extrair tudo que parece ser Base64 após encontrar uma linha com p=
         DKIMCode=""
-        FOUND_P=false
+        CAPTURING=false
         
         while IFS= read -r line; do
+            echo "Analisando linha: $line"
+            
+            # Se a linha contém p=, começar a capturar
             if echo "$line" | grep -q 'p='; then
-                FOUND_P=true
-                # Extrair a parte após p=
-                temp=$(echo "$line" | sed 's/.*p=//; s/".*//; s/ //g')
-                DKIMCode="$DKIMCode$temp"
-            elif [ "$FOUND_P" = true ] && echo "$line" | grep -q '"'; then
-                # Linha de continuação
-                temp=$(echo "$line" | tr -d '"' | tr -d ' \t')
-                DKIMCode="$DKIMCode$temp"
+                CAPTURING=true
+                echo "  -> Iniciando captura"
+                # Extrair tudo após p="
+                part=$(echo "$line" | sed 's/.*p="//; s/".*//')
+                DKIMCode="$DKIMCode$part"
+                echo "  -> Capturado: '$part'"
+            elif [ "$CAPTURING" = true ] && echo "$line" | grep -q '"'; then
+                # Linha de continuação com aspas
+                echo "  -> Linha de continuação"
+                part=$(echo "$line" | sed 's/^[[:space:]]*"//; s/".*//')
+                DKIMCode="$DKIMCode$part"
+                echo "  -> Capturado: '$part'"
                 
-                # Se encontrou ), parar
-                if echo "$line" | grep -q ')'; then
+                # Se a linha termina com ") - fim do registro
+                if echo "$line" | grep -q '")'; then
+                    echo "  -> Fim do registro DKIM"
                     break
                 fi
             fi
         done < "$DKIM_FILE"
         
-        echo "-> Força bruta: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
+        echo "-> Método 2 resultado: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
     fi
     
-    # Limpeza final usando seu método
-    DKIMCode=$(echo "$DKIMCode" | tr -d '\n' | tr -s ' ')
+    # Método 3: Se ainda não funcionou, método de força bruta
+    if [ -z "$DKIMCode" ] || [ ${#DKIMCode} -lt 300 ]; then
+        echo "-> Método 3 (força bruta)..."
+        
+        # Pegar todas as linhas numeradas 2 e 3 (onde está a chave)
+        DKIMCode=$(sed -n '2,3p' "$DKIM_FILE" | tr -d '\n' | sed 's/.*p="//; s/").*//' | tr -d ' \t"')
+        
+        echo "-> Método 3 resultado: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
+    fi
     
-    # Remover qualquer lixo conhecido
-    DKIMCode=$(echo "$DKIMCode" | sed 's/[^A-Za-z0-9+\/=]//g')
+    # Limpeza final
+    DKIMCode=$(echo "$DKIMCode" | tr -d '\n\r\t ' | sed 's/[^A-Za-z0-9+\/=]//g')
     
     echo "-> Código DKIM final:"
     echo "   Tamanho: ${#DKIMCode} caracteres"
     echo "   Início: ${DKIMCode:0:50}..."
     echo "   Final: ...${DKIMCode: -50}"
+    echo "   Completo: $DKIMCode"
     
     # Validação
     if [ ${#DKIMCode} -lt 300 ]; then
-        echo "❌ ERRO: Chave DKIM muito curta (${#DKIMCode} caracteres)"
-        echo "Debug do arquivo:"
-        echo "=================="
-        cat "$DKIM_FILE" | nl
-        echo "=================="
+        echo "❌ ERRO: Chave DKIM ainda muito curta (${#DKIMCode} caracteres)"
+        
+        # Debug extremo - mostrar cada linha processada
+        echo "-> Debug extremo:"
+        i=1
+        while IFS= read -r line; do
+            echo "Linha $i: '$line'"
+            if echo "$line" | grep -q '"'; then
+                extracted=$(echo "$line" | sed 's/.*"//; s/".*//')
+                echo "  -> Extraído: '$extracted'"
+            fi
+            i=$((i+1))
+        done < "$DKIM_FILE"
+        
         exit 1
     fi
     
@@ -248,13 +262,13 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
     else
         echo "✅ Zone ID obtido: $ZONE_ID"
         
-        # Função para criar/atualizar registro (baseada na sua sugestão)
+        # Função para criar/atualizar registro
         create_or_update_record() {
             local name="$1"
             local type="$2"
             local content="$3"
             
-            echo "-> Criando/atualizando registro $name..."
+            echo "-> Configurando registro $name..."
             
             # Verificar se já existe
             EXISTING=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=$name&type=$type" \
@@ -282,13 +296,17 @@ if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
             
             if echo "$RESPONSE" | jq -r '.success' | grep -q "true"; then
                 echo "✅ Registro $name configurado com sucesso!"
+                
+                # Mostrar o conteúdo criado
+                CREATED_CONTENT=$(echo "$RESPONSE" | jq -r '.result.content')
+                echo "✅ Conteúdo: ${CREATED_CONTENT:0:100}..."
             else
                 echo "❌ Erro ao configurar $name:"
                 echo "$RESPONSE" | jq -r '.errors[]?.message // "Erro desconhecido"'
             fi
         }
         
-        # Criar registro DKIM usando sua função
+        # Criar registro DKIM
         create_or_update_record "default._domainkey.$DOMAIN" "TXT" "\"v=DKIM1; h=sha256; k=rsa; p=$EscapedDKIMCode\""
     fi
     
