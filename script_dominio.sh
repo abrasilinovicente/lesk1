@@ -23,6 +23,20 @@ echo -e "${GREEN}Domínio: $DOMAIN${NC}"
 echo -e "${GREEN}Modo: Instalação Automática (sem interação)${NC}"
 echo -e "${GREEN}========================================${NC}"
 
+# Verificar e liberar locks do apt/dpkg
+echo -e "${YELLOW}Verificando locks do sistema...${NC}"
+if lsof /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+    echo -e "${YELLOW}Aguardando liberação do apt/dpkg...${NC}"
+    killall -9 apt apt-get dpkg 2>/dev/null || true
+    sleep 2
+fi
+
+# Limpar locks se existirem
+rm -f /var/lib/apt/lists/lock
+rm -f /var/cache/apt/archives/lock
+rm -f /var/lib/dpkg/lock*
+dpkg --configure -a 2>/dev/null || true
+
 # Configurar para não perguntar sobre reinicialização de serviços
 echo '#!/bin/sh' > /usr/sbin/policy-rc.d
 echo 'exit 101' >> /usr/sbin/policy-rc.d
@@ -46,34 +60,31 @@ apt-get upgrade -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="
 
 # Pré-configurar Postfix para instalação não-interativa
 echo -e "${YELLOW}Pré-configurando Postfix...${NC}"
-debconf-set-selections <<< "postfix postfix/mailname string $DOMAIN"
-debconf-set-selections <<< "postfix postfix/main_mailer_type string 'Internet Site'"
-debconf-set-selections <<< "postfix postfix/destinations string $DOMAIN, localhost"
-debconf-set-selections <<< "postfix postfix/relayhost string ''"
+echo "postfix postfix/mailname string $DOMAIN" | debconf-set-selections
+echo "postfix postfix/main_mailer_type string 'Internet Site'" | debconf-set-selections
+echo "postfix postfix/destinations string $DOMAIN, localhost" | debconf-set-selections
+echo "postfix postfix/relayhost string ''" | debconf-set-selections
 
 # Instalar dependências necessárias sem interação
 echo -e "${YELLOW}Instalando dependências...${NC}"
-apt-get install -y -qq \
-    postfix \
-    opendkim \
-    opendkim-tools \
-    dovecot-core \
-    dovecot-imapd \
-    dovecot-pop3d \
-    dovecot-lmtpd \
-    libsasl2-2 \
-    libsasl2-modules \
-    sasl2-bin \
-    mailutils \
-    wget \
-    unzip \
-    curl \
-    certbot \
-    python3-certbot-nginx \
-    nginx \
-    -o Dpkg::Options::="--force-confdef" \
-    -o Dpkg::Options::="--force-confold" \
-    2>/dev/null
+PACKAGES="postfix opendkim opendkim-tools dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd libsasl2-2 libsasl2-modules sasl2-bin mailutils wget unzip curl nginx ssl-cert"
+
+for package in $PACKAGES; do
+    if ! dpkg -l | grep -q "^ii  $package"; then
+        echo -e "${YELLOW}Instalando $package...${NC}"
+        apt-get install -y -qq $package \
+            -o Dpkg::Options::="--force-confdef" \
+            -o Dpkg::Options::="--force-confold" \
+            2>/dev/null || echo -e "${RED}Erro ao instalar $package${NC}"
+    fi
+done
+
+# Criar diretórios necessários
+mkdir -p /var/www/html
+mkdir -p /etc/nginx/sites-available
+mkdir -p /etc/nginx/sites-enabled
+mkdir -p /var/mail/vhosts/$DOMAIN
+mkdir -p /etc/opendkim/keys/$DOMAIN
 
 # Remover policy-rc.d após instalação
 rm -f /usr/sbin/policy-rc.d
@@ -86,7 +97,48 @@ echo "127.0.0.1 mail.$DOMAIN" >> /etc/hosts
 # Baixar e configurar OpenDKIM
 if [ ! -z "$URL_OPENDKIM_CONF" ]; then
     echo -e "${YELLOW}Baixando configuração do OpenDKIM...${NC}"
-    wget -O /etc/opendkim.conf "$URL_OPENDKIM_CONF"
+    # Garantir que pegamos o arquivo raw, não a página HTML
+    if [[ "$URL_OPENDKIM_CONF" == *"github.com"* ]] && [[ "$URL_OPENDKIM_CONF" != *"raw.githubusercontent.com"* ]]; then
+        # Converter URL do GitHub para raw
+        URL_OPENDKIM_CONF=$(echo "$URL_OPENDKIM_CONF" | sed 's|github.com|raw.githubusercontent.com|' | sed 's|/blob||')
+        echo -e "${YELLOW}URL corrigida para: $URL_OPENDKIM_CONF${NC}"
+    fi
+    
+    wget -O /etc/opendkim.conf "$URL_OPENDKIM_CONF" 2>/dev/null || {
+        echo -e "${RED}Erro ao baixar OpenDKIM config, usando configuração padrão${NC}"
+    }
+fi
+
+# Verificar se o arquivo baixado é HTML (erro comum)
+if [ -f /etc/opendkim.conf ] && grep -q "<html>" /etc/opendkim.conf; then
+    echo -e "${RED}Arquivo OpenDKIM é HTML, não configuração. Criando configuração padrão...${NC}"
+    rm -f /etc/opendkim.conf
+fi
+
+# Se não tiver arquivo de configuração, criar um padrão
+if [ ! -f /etc/opendkim.conf ] || [ ! -s /etc/opendkim.conf ]; then
+    echo -e "${YELLOW}Criando configuração padrão do OpenDKIM...${NC}"
+    cat > /etc/opendkim.conf << EOF
+Mode                    sv
+Syslog                  yes
+SyslogSuccess          yes
+LogWhy                 yes
+Domain                  *
+SubDomains             yes
+AutoRestart            yes
+AutoRestartRate        10/1h
+Canonicalization       relaxed/simple
+SignatureAlgorithm     rsa-sha256
+MinimumKeyBits         1024
+KeyTable               /etc/opendkim/KeyTable
+SigningTable           refile:/etc/opendkim/SigningTable
+ExternalIgnoreList     /etc/opendkim/TrustedHosts
+InternalHosts          /etc/opendkim/TrustedHosts
+Socket                 inet:8891@localhost
+PidFile                /var/run/opendkim/opendkim.pid
+UMask                  002
+UserID                 opendkim:opendkim
+EOF
 fi
 
 # Configurar OpenDKIM com chave de 1024 bits
