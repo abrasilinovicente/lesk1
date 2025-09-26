@@ -7,7 +7,6 @@ export NEEDRESTART_SUSPEND=1
 
 # Receber parâmetros
 DOMAIN=$1
-URL_OPENDKIM_CONF=$2
 CLOUDFLARE_API=$3
 CLOUDFLARE_EMAIL=$4
 
@@ -105,27 +104,16 @@ $nrconf{restartsessionui} = 0;
 $nrconf{nagsessionui} = 0;
 EOF
 
-# Atualizar sistema sem interação
-echo -e "${YELLOW}Atualizando sistema...${NC}"
-echo -e "${YELLOW}📦 Etapa 1/2: Atualizando lista de pacotes...${NC}"
-wait_for_apt  # Aguardar antes de atualizar
-apt-get update -y -qq 2>&1 | while read line; do
-    if [[ $line == *"Get:"* ]]; then
-        echo -ne "\r  → Baixando repositórios... $(echo $line | grep -o '[0-9]*%' | tail -1)    "
-    fi
-done
-echo -e "\n${GREEN}✓ Lista atualizada${NC}"
+# Atualizar sistema sem interação (OPCIONAL - comentado para velocidade)
+echo -e "${YELLOW}Pulando atualização do sistema para economizar tempo...${NC}"
+echo -e "${YELLOW}⚠️ AVISO: Isso pode causar problemas de compatibilidade${NC}"
 
-echo -e "${YELLOW}📦 Etapa 2/2: Aplicando atualizações (pode demorar 5-10 minutos)...${NC}"
-apt-get upgrade -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" &
-upgrade_pid=$!
+# DESCOMENTE AS 2 LINHAS ABAIXO SE QUISER ATUALIZAR:
+# apt-get update -y -qq
+# apt-get upgrade -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
-# Mostrar progresso enquanto atualiza
-while kill -0 $upgrade_pid 2>/dev/null; do
-    echo -ne "\r  → Atualizando sistema... $(date '+%H:%M:%S')    "
-    sleep 2
-done
-echo -e "\n${GREEN}✓ Sistema atualizado${NC}"
+# Apenas atualizar a lista de pacotes (rápido e necessário)
+apt-get update -y -qq
 
 # Pré-configurar Postfix para instalação não-interativa
 echo -e "${YELLOW}Pré-configurando Postfix...${NC}"
@@ -181,31 +169,13 @@ echo -e "${YELLOW}Configurando hostname...${NC}"
 hostnamectl set-hostname mail.$DOMAIN
 echo "127.0.0.1 mail.$DOMAIN" >> /etc/hosts
 
-# Baixar e configurar OpenDKIM
-if [ ! -z "$URL_OPENDKIM_CONF" ]; then
-    echo -e "${YELLOW}Baixando configuração do OpenDKIM...${NC}"
-    # Garantir que pegamos o arquivo raw, não a página HTML
-    if [[ "$URL_OPENDKIM_CONF" == *"github.com"* ]] && [[ "$URL_OPENDKIM_CONF" != *"raw.githubusercontent.com"* ]]; then
-        # Converter URL do GitHub para raw
-        URL_OPENDKIM_CONF=$(echo "$URL_OPENDKIM_CONF" | sed 's|github.com|raw.githubusercontent.com|' | sed 's|/blob||')
-        echo -e "${YELLOW}URL corrigida para: $URL_OPENDKIM_CONF${NC}"
-    fi
-    
-    wget -O /etc/opendkim.conf "$URL_OPENDKIM_CONF" 2>/dev/null || {
-        echo -e "${RED}Erro ao baixar OpenDKIM config, usando configuração padrão${NC}"
-    }
-fi
+# Configurar OpenDKIM com chave de 1024 bits
+echo -e "${YELLOW}Configurando OpenDKIM com chave RSA 1024...${NC}"
 
-# Verificar se o arquivo baixado é HTML (erro comum)
-if [ -f /etc/opendkim.conf ] && grep -q "<html>" /etc/opendkim.conf; then
-    echo -e "${RED}Arquivo OpenDKIM é HTML, não configuração. Criando configuração padrão...${NC}"
-    rm -f /etc/opendkim.conf
-fi
-
-# Se não tiver arquivo de configuração, criar um padrão
-if [ ! -f /etc/opendkim.conf ] || [ ! -s /etc/opendkim.conf ]; then
-    echo -e "${YELLOW}Criando configuração padrão do OpenDKIM...${NC}"
-    cat > /etc/opendkim.conf << EOF
+# Criar configuração do OpenDKIM diretamente (sem depender de arquivo externo)
+echo -e "${YELLOW}  → Criando configuração inline do OpenDKIM...${NC}"
+cat > /etc/opendkim.conf << 'EOF'
+# Configuração OpenDKIM integrada ao script
 Mode                    sv
 Syslog                  yes
 SyslogSuccess          yes
@@ -226,15 +196,37 @@ PidFile                /var/run/opendkim/opendkim.pid
 UMask                  002
 UserID                 opendkim:opendkim
 EOF
-fi
 
-# Configurar OpenDKIM com chave de 1024 bits
-echo -e "${YELLOW}Configurando OpenDKIM com chave RSA 1024...${NC}"
+echo -e "${GREEN}  ✓ Configuração criada${NC}"
+
+# Criar diretórios necessários
 mkdir -p /etc/opendkim/keys/$DOMAIN
+mkdir -p /var/run/opendkim
+mkdir -p /var/log/opendkim
+chown -R opendkim:opendkim /var/run/opendkim
+chown -R opendkim:opendkim /var/log/opendkim 2>/dev/null || true
+
+# Gerar chave DKIM
+echo -e "${YELLOW}  → Gerando chave DKIM 1024 bits...${NC}"
 cd /etc/opendkim/keys/$DOMAIN
-opendkim-genkey -b 1024 -s mail -d $DOMAIN
-chown opendkim:opendkim mail.private
-chmod 600 mail.private
+opendkim-genkey -b 1024 -s mail -d $DOMAIN 2>/dev/null || {
+    echo -e "${YELLOW}  → Regenerando chave...${NC}"
+    rm -f mail.private mail.txt
+    opendkim-genkey -b 1024 -s mail -d $DOMAIN
+}
+
+# Verificar se a chave foi criada
+if [ -f mail.private ]; then
+    echo -e "${GREEN}  ✓ Chave DKIM gerada${NC}"
+    chown opendkim:opendkim mail.private
+    chmod 600 mail.private
+else
+    echo -e "${RED}  ✗ Erro ao gerar chave, usando método alternativo${NC}"
+    openssl genrsa -out mail.private 1024
+    openssl rsa -in mail.private -pubout -out mail.txt
+    chown opendkim:opendkim mail.private
+    chmod 600 mail.private
+fi
 
 # Criar arquivos de configuração OpenDKIM
 echo "mail._domainkey.$DOMAIN $DOMAIN:mail:/etc/opendkim/keys/$DOMAIN/mail.private" >> /etc/opendkim/KeyTable
@@ -588,9 +580,38 @@ chown -R vmail:vmail /var/mail/vhosts/$DOMAIN/admin
 
 # Reiniciar serviços
 echo -e "${YELLOW}Reiniciando serviços...${NC}"
-systemctl restart opendkim
+
+# Testar configuração do OpenDKIM antes de reiniciar
+echo -e "${YELLOW}  → Testando configuração do OpenDKIM...${NC}"
+if opendkim -n 2>/dev/null; then
+    echo -e "${GREEN}  ✓ Configuração válida${NC}"
+    systemctl restart opendkim 2>/dev/null && echo -e "${GREEN}  ✓ OpenDKIM reiniciado${NC}" || {
+        echo -e "${YELLOW}  ⚠ OpenDKIM não iniciou, tentando correção...${NC}"
+        # Tentar criar configuração mínima
+        cat > /etc/opendkim.conf << EOF
+Domain                  $DOMAIN
+KeyFile                 /etc/opendkim/keys/$DOMAIN/mail.private
+Selector                mail
+Socket                  inet:8891@localhost
+UserID                  opendkim:opendkim
+EOF
+        systemctl restart opendkim 2>/dev/null || echo -e "${RED}  ✗ OpenDKIM falhou (não crítico)${NC}"
+    }
+else
+    echo -e "${YELLOW}  ⚠ Configuração com problemas, usando modo simples${NC}"
+    # Configuração mínima
+    cat > /etc/opendkim.conf << EOF
+Domain                  $DOMAIN
+KeyFile                 /etc/opendkim/keys/$DOMAIN/mail.private
+Selector                mail
+Socket                  inet:8891@localhost
+EOF
+    systemctl restart opendkim 2>/dev/null || echo -e "${RED}  ✗ OpenDKIM não iniciou${NC}"
+fi
+
 systemctl restart postfix
 systemctl restart dovecot
+systemctl restart nginx
 
 # Habilitar serviços na inicialização
 systemctl enable opendkim
