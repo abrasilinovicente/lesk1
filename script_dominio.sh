@@ -1,374 +1,981 @@
 #!/bin/bash
 
-set -Eeuo pipefail
-trap 'echo "[ERRO] linha $LINENO: $BASH_COMMAND (status $?)" >&2' ERR
+# Receber parâmetros
+DOMAIN=$1
+URL_APP_ZIP=$2
+URL_ENVIO_ZIP=$3
+UNUSED_PARAM=$4
+URL_OPENDKIM_CONF=$5
+URL_POSTFIX_CONF=$6
+CLOUDFLARE_API=$7
+CLOUDFLARE_EMAIL=$8
 
-#================================================================================
-# Script de Configuração Final (v3.0 - Com Cloudflare)
-#================================================================================
+# Cores para output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-# --- VALIDAÇÃO DOS ARGUMENTOS ---
-if [ "$#" -ne 8 ]; then
-    echo "ERRO: Número incorreto de argumentos. São necessários 8."
-    echo "Recebidos: $#"
-    echo "Argumentos: $@"
-    exit 1
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Iniciando configuração do servidor${NC}"
+echo -e "${GREEN}Domínio: $DOMAIN${NC}"
+echo -e "${GREEN}========================================${NC}"
+
+# Atualizar sistema
+echo -e "${YELLOW}Atualizando sistema...${NC}"
+apt-get update -y
+apt-get upgrade -y
+
+# Instalar dependências necessárias
+echo -e "${YELLOW}Instalando dependências...${NC}"
+apt-get install -y \
+    postfix \
+    opendkim \
+    opendkim-tools \
+    dovecot-core \
+    dovecot-imapd \
+    dovecot-pop3d \
+    dovecot-lmtpd \
+    libsasl2-2 \
+    libsasl2-modules \
+    sasl2-bin \
+    mailutils \
+    wget \
+    unzip \
+    curl \
+    certbot \
+    python3-certbot-nginx \
+    nginx
+
+# Configurar hostname
+echo -e "${YELLOW}Configurando hostname...${NC}"
+hostnamectl set-hostname mail.$DOMAIN
+echo "127.0.0.1 mail.$DOMAIN" >> /etc/hosts
+
+# Baixar e configurar OpenDKIM
+if [ ! -z "$URL_OPENDKIM_CONF" ]; then
+    echo -e "${YELLOW}Baixando configuração do OpenDKIM...${NC}"
+    wget -O /etc/opendkim.conf "$URL_OPENDKIM_CONF"
 fi
 
-# --- DEFINIÇÃO DE VARIÁVEIS A PARTIR DOS ARGUMENTOS ---
-DOMAIN="$1"
-URL_APP_ZIP="$2"
-URL_ENVIO_ZIP="$3"
-# $4 está vazio (reservado)
-URL_OPENDKIM_CONF="$5"
-URL_POSTFIX_CONF="$6"
-CLOUDFLARE_API="$7"
-CLOUDFLARE_EMAIL="$8"
+# Configurar OpenDKIM com chave de 1024 bits
+echo -e "${YELLOW}Configurando OpenDKIM com chave RSA 1024...${NC}"
+mkdir -p /etc/opendkim/keys/$DOMAIN
+cd /etc/opendkim/keys/$DOMAIN
+opendkim-genkey -b 1024 -s mail -d $DOMAIN
+chown opendkim:opendkim mail.private
+chmod 600 mail.private
 
-# Extrair domínio principal para Cloudflare
-MAIN_DOMAIN=$(echo $DOMAIN | cut -d "." -f2-)
-SERVER_IP=$(wget -qO- http://ip-api.com/line\?fields=query)
+# Criar arquivos de configuração OpenDKIM
+echo "mail._domainkey.$DOMAIN $DOMAIN:mail:/etc/opendkim/keys/$DOMAIN/mail.private" >> /etc/opendkim/KeyTable
+echo "*@$DOMAIN mail._domainkey.$DOMAIN" >> /etc/opendkim/SigningTable
+echo "127.0.0.1" >> /etc/opendkim/TrustedHosts
+echo "localhost" >> /etc/opendkim/TrustedHosts
+echo ".$DOMAIN" >> /etc/opendkim/TrustedHosts
 
-# Variáveis internas
-WEB_ROOT="/var/www/html"
-export DEBIAN_FRONTEND=noninteractive
+# Baixar e configurar Postfix
+if [ ! -z "$URL_POSTFIX_CONF" ]; then
+    echo -e "${YELLOW}Baixando configuração do Postfix...${NC}"
+    wget -O /etc/postfix/main.cf "$URL_POSTFIX_CONF"
+fi
 
-# --- FUNÇÃO PARA LOG DE ERRO ---
-log_error() {
-    echo "!!-- ERRO CRÍTICO NA ETAPA: $1 --!!"
-    exit 1
+# Adicionar configurações específicas do domínio ao Postfix
+echo -e "${YELLOW}Configurando Postfix para $DOMAIN...${NC}"
+cat >> /etc/postfix/main.cf << EOF
+
+# Configurações específicas do domínio
+myhostname = mail.$DOMAIN
+mydomain = $DOMAIN
+myorigin = \$mydomain
+mydestination = \$myhostname, localhost.\$mydomain, localhost, \$mydomain
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
+
+# Configuração Dovecot SASL
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = private/auth
+smtpd_sasl_auth_enable = yes
+smtpd_sasl_security_options = noanonymous
+smtpd_sasl_local_domain = \$mydomain
+broken_sasl_auth_clients = yes
+
+# Restrições de relay
+smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, defer_unauth_destination
+smtpd_recipient_restrictions = permit_sasl_authenticated, permit_mynetworks, reject_unauth_destination
+
+# TLS/SSL
+smtpd_use_tls = yes
+smtpd_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem
+smtpd_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key
+smtpd_tls_security_level = may
+smtp_tls_security_level = may
+
+# Virtual mailbox
+virtual_transport = lmtp:unix:private/dovecot-lmtp
+virtual_mailbox_domains = $DOMAIN
+virtual_mailbox_base = /var/mail/vhosts
+virtual_mailbox_maps = hash:/etc/postfix/vmailbox
+virtual_minimum_uid = 100
+virtual_uid_maps = static:5000
+virtual_gid_maps = static:5000
+
+# Limites de mensagem
+message_size_limit = 52428800
+mailbox_size_limit = 0
+
+# OpenDKIM
+milter_protocol = 6
+milter_default_action = accept
+smtpd_milters = inet:localhost:12301
+non_smtpd_milters = inet:localhost:12301
+EOF
+
+# Criar arquivo master.cf atualizado
+echo -e "${YELLOW}Configurando master.cf...${NC}"
+cat > /etc/postfix/master.cf << 'EOF'
+#
+# Postfix master process configuration file
+#
+smtp      inet  n       -       y       -       -       smtpd
+submission inet n       -       y       -       -       smtpd
+  -o syslog_name=postfix/submission
+  -o smtpd_tls_security_level=encrypt
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_tls_auth_only=yes
+  -o smtpd_reject_unlisted_recipient=no
+  -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
+  -o milter_macro_daemon_name=ORIGINATING
+smtps     inet  n       -       y       -       -       smtpd
+  -o syslog_name=postfix/smtps
+  -o smtpd_tls_wrappermode=yes
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_reject_unlisted_recipient=no
+  -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
+  -o milter_macro_daemon_name=ORIGINATING
+pickup    unix  n       -       y       60      1       pickup
+cleanup   unix  n       -       y       -       0       cleanup
+qmgr      unix  n       -       n       300     1       qmgr
+tlsmgr    unix  -       -       y       1000?   1       tlsmgr
+rewrite   unix  -       -       y       -       -       trivial-rewrite
+bounce    unix  -       -       y       -       0       bounce
+defer     unix  -       -       y       -       0       bounce
+trace     unix  -       -       y       -       0       bounce
+verify    unix  -       -       y       -       1       verify
+flush     unix  n       -       y       1000?   0       flush
+proxymap  unix  -       -       n       -       -       proxymap
+proxywrite unix -       -       n       -       1       proxymap
+smtp      unix  -       -       y       -       -       smtp
+relay     unix  -       -       y       -       -       smtp
+showq     unix  n       -       y       -       -       showq
+error     unix  -       -       y       -       -       error
+retry     unix  -       -       y       -       -       error
+discard   unix  -       -       y       -       -       discard
+local     unix  -       n       n       -       -       local
+virtual   unix  -       n       n       -       -       virtual
+lmtp      unix  -       -       y       -       -       lmtp
+anvil     unix  -       -       y       -       1       anvil
+scache    unix  -       -       y       -       1       scache
+postlog   unix-dgram n  -       n       -       1       postlogd
+maildrop  unix  -       n       n       -       -       pipe
+  flags=DRXhu user=vmail argv=/usr/bin/maildrop -d ${recipient}
+uucp      unix  -       n       n       -       -       pipe
+  flags=Fqhu user=uucp argv=uux -r -n -z -a$sender - $nexthop!rmail ($recipient)
+ifmail    unix  -       n       n       -       -       pipe
+  flags=F user=ftn argv=/usr/lib/ifmail/ifmail -r $nexthop ($recipient)
+bsmtp     unix  -       n       n       -       -       pipe
+  flags=Fq. user=bsmtp argv=/usr/lib/bsmtp/bsmtp -t$nexthop -f$sender $recipient
+scalemail-backend unix -       n       n       -       2       pipe
+  flags=R user=scalemail argv=/usr/lib/scalemail/bin/scalemail-store ${nexthop} ${user} ${extension}
+mailman   unix  -       n       n       -       -       pipe
+  flags=FRX user=list argv=/usr/lib/mailman/bin/postfix-to-mailman.py ${nexthop} ${user}
+EOF
+
+# Criar usuário vmail
+echo -e "${YELLOW}Criando usuário vmail...${NC}"
+groupadd -g 5000 vmail
+useradd -g vmail -u 5000 vmail -d /var/mail/vhosts -m
+
+# Criar diretórios necessários
+mkdir -p /var/mail/vhosts/$DOMAIN
+chown -R vmail:vmail /var/mail/vhosts
+
+# Configurar virtual mailbox
+echo "admin@$DOMAIN $DOMAIN/admin/" > /etc/postfix/vmailbox
+postmap /etc/postfix/vmailbox
+
+# Configurar Dovecot
+echo -e "${YELLOW}Configurando Dovecot...${NC}"
+
+# Configuração principal do Dovecot
+cat > /etc/dovecot/dovecot.conf << EOF
+# Dovecot configuration
+protocols = imap pop3 lmtp
+listen = *, ::
+mail_location = maildir:/var/mail/vhosts/%d/%n
+mail_privileged_group = mail
+
+# SSL/TLS
+ssl = yes
+ssl_cert = </etc/ssl/certs/ssl-cert-snakeoil.pem
+ssl_key = </etc/ssl/private/ssl-cert-snakeoil.key
+
+# Authentication
+auth_mechanisms = plain login
+disable_plaintext_auth = no
+
+# Mail
+first_valid_uid = 5000
+last_valid_uid = 5000
+first_valid_gid = 5000
+last_valid_gid = 5000
+
+# Logging
+log_path = /var/log/dovecot.log
+info_log_path = /var/log/dovecot-info.log
+
+# Namespaces
+namespace inbox {
+  inbox = yes
+  location = 
+  mailbox Drafts {
+    auto = create
+    special_use = \Drafts
+  }
+  mailbox Junk {
+    auto = create
+    special_use = \Junk
+  }
+  mailbox Sent {
+    auto = create
+    special_use = \Sent
+  }
+  mailbox Trash {
+    auto = create
+    special_use = \Trash
+  }
+  prefix = 
 }
 
-# --- INÍCIO DA CONFIGURAÇÃO ---
-echo "🚀 Iniciando a configuração completa para o domínio: $DOMAIN"
-echo "📧 Cloudflare Email: $CLOUDFLARE_EMAIL"
-echo "🔑 Cloudflare API: ${CLOUDFLARE_API:0:10}..."
-echo "🌐 Domínio principal: $MAIN_DOMAIN"
-echo "📍 IP do servidor: $SERVER_IP"
+# Protocols
+protocol imap {
+  mail_max_userip_connections = 100
+}
 
-# Etapas 1-6 (Sistema, Rede, SSL)
-apt-get update && apt-get upgrade -y && apt-get install -y curl unzip software-properties-common toilet ufw jq || log_error "Atualização e Pacotes Essenciais"
-hostnamectl set-hostname "$DOMAIN" && echo "$DOMAIN" > /etc/hostname || log_error "Configuração de Hostname"
-ufw allow 'OpenSSH' && ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 25/tcp && ufw --force enable || log_error "Configuração do Firewall"
-add-apt-repository ppa:ondrej/php -y && apt-get update -y || log_error "Adição do Repositório PHP"
-apt-get install -y apache2 php7.4 libapache2-mod-php7.4 php7.4-cli php7.4-mysql php7.4-gd php7.4-imagick php7.4-tidy php7.4-xmlrpc php7.4-common php7.4-xml php7.4-curl php7.4-dev php7.4-imap php7.4-mbstring php7.4-opcache php7.4-soap php7.4-zip php7.4-intl --allow-unauthenticated || log_error "Instalação do Apache e PHP"
-apt-get install -y certbot python3-certbot-apache && a2enmod rewrite ssl && systemctl restart apache2 && certbot --apache --non-interactive --agree-tos -m "admin@$DOMAIN" -d "$DOMAIN" || log_error "Instalação do Certificado SSL"
+protocol pop3 {
+  mail_max_userip_connections = 10
+}
 
-# ==============================================================================
-# 7. DOWNLOAD E CONFIGURAÇÃO
-# ==============================================================================
-echo "-> Preparando para instalar aplicações..."
-rm -f "$WEB_ROOT/index.html"
+protocol lmtp {
+  mail_plugins = quota
+  postmaster_address = postmaster@$DOMAIN
+}
 
-echo "-> Instalando Backend (API) no diretório home (/root/)..."
-(cd /root/ && \
-    echo "Baixando base.zip..." && \
-    curl -L -o base.zip "$URL_APP_ZIP" && \
-    echo "Extraindo base.zip..." && \
-    unzip -o base.zip && \
-    echo "Limpando base.zip..." && \
-    rm base.zip \
-) || log_error "Instalação do Backend (API)"
+# Services
+service lmtp {
+  unix_listener /var/spool/postfix/private/dovecot-lmtp {
+    mode = 0600
+    user = postfix
+    group = postfix
+  }
+}
 
-echo "-> Aplicando permissões..."
-chmod -R 777 "$WEB_ROOT"
+service auth {
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+  
+  unix_listener auth-userdb {
+    mode = 0660
+    user = vmail
+    group = vmail
+  }
+}
 
-# ==============================================================================
-# 8. CONFIGURAÇÃO DE EMAIL
-# ==============================================================================
-echo "-> Instalando e configurando servidor de email..."
-(
-    echo "postfix postfix/mailname string $DOMAIN" | debconf-set-selections && \
-    echo "postfix postfix/main_mailer_type string 'Internet Site'" | debconf-set-selections && \
-    apt-get install -y postfix opendkim opendkim-tools && \
-    mkdir -p /etc/opendkim && \
-    rm -f /etc/opendkim.conf && \
-    wget -q -O /etc/opendkim.conf "$URL_OPENDKIM_CONF" && \
-    echo "*@$DOMAIN default._domainkey.$DOMAIN" > /etc/opendkim/SigningTable && \
-    echo "default._domainkey.$DOMAIN $DOMAIN:default:/etc/opendkim/keys/default.private" > /etc/opendkim/KeyTable && \
-    echo -e "127.0.0.1\nlocalhost\n*.$DOMAIN" > /etc/opendkim/TrustedHosts && \
-    chown -R opendkim:opendkim /etc/opendkim && \
-    chmod go-rw /etc/opendkim && \
-    mkdir -p /etc/opendkim/keys && \
-    (cd /etc/opendkim/keys && opendkim-genkey -s default -d "$DOMAIN") && \
-    chown opendkim:opendkim /etc/opendkim/keys/default.private && \
-    chmod 600 /etc/opendkim/keys/default.private && \
-    adduser postfix opendkim && \
-    rm -f /etc/postfix/main.cf && \
-    wget -q -O /etc/postfix/main.cf "$URL_POSTFIX_CONF" && \
-    sed -i "s/seudominio.com/$DOMAIN/g" /etc/postfix/main.cf && \
-    echo "www-data ALL=(ALL) NOPASSWD: /usr/sbin/postsuper" | tee -a /etc/sudoers > /dev/null && \
-    systemctl restart opendkim && \
-    systemctl reload postfix
-) || log_error "Configuração do Servidor de Email"
+service auth-worker {
+  user = vmail
+}
 
-# ==============================================================================
-# 8.1. CONFIGURAÇÃO DE LOGGING DE EMAIL (CORRIGIDO)
-# ==============================================================================
-echo "-> Configurando logging de email..."
-(
-    # Instalar rsyslog se necessário
-    if ! command -v rsyslogd >/dev/null 2>&1; then
-        echo "-> Instalando rsyslog..."
-        DEBIAN_FRONTEND=noninteractive apt-get install -y rsyslog
-        systemctl enable rsyslog
-        systemctl start rsyslog
-    fi
-    
-    # Criar arquivos de log
-    touch /var/log/maillog /var/log/mail.info /var/log/mail.warn /var/log/mail.err
-    chmod 640 /var/log/maillog /var/log/mail.*
-    chown root:root /var/log/maillog /var/log/mail.*
-    
-    # Configurar rsyslog se existir
-    if [ -f /etc/rsyslog.conf ]; then
-        if ! grep -q "mail.*" /etc/rsyslog.conf; then
-            echo "mail.*                          /var/log/maillog" >> /etc/rsyslog.conf
-        fi
-        systemctl restart rsyslog 2>/dev/null || true
-    fi
-    
-    echo "✅ Arquivos de log criados"
-    
-) || echo "⚠️ Aviso: Problema na configuração de logging (não crítico)"
+# Passdb and Userdb
+passdb {
+  driver = passwd-file
+  args = scheme=PLAIN username_format=%u /etc/dovecot/users
+}
 
-#!/bin/bash
+userdb {
+  driver = static
+  args = uid=vmail gid=vmail home=/var/mail/vhosts/%d/%n allow_all_users=yes
+}
+EOF
 
-# ==============================================================================
-# 9. CONFIGURAÇÃO CLOUDFLARE DNS (VERSÃO FINAL CORRIGIDA)
-# ==============================================================================
-if [ -n "$CLOUDFLARE_API" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
-    echo "-> Configurando DNS no Cloudflare..."
-    
-    # Instalar jq se não existir
-    if ! command -v jq &> /dev/null; then
-        echo "-> Instalando jq..."
-        apt-get install -y jq
-    fi
-    
-    DKIM_FILE="/etc/opendkim/keys/default.txt"
-    
-    echo "-> Conteúdo do arquivo DKIM:"
-    cat "$DKIM_FILE"
-    echo "================================"
-    
-    # MÉTODO CORRIGIDO - Extrair apenas a chave pública RSA
-    echo "-> Extraindo código DKIM (método corrigido)..."
-    
-    # Primeiro, vamos capturar todo o conteúdo entre as aspas
-    # Remover primeira linha com o cabeçalho, depois juntar tudo
-    DKIMCode=$(grep -v "^default._domainkey" "$DKIM_FILE" | \
-               sed 's/^[[:space:]]*"//' | \
-               sed 's/"[[:space:]]*).*//' | \
-               sed 's/"$//' | \
-               tr -d '\n' | \
-               tr -d ' \t')
-    
-    echo "-> Chave extraída inicial: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
-    
-    # Remover o prefixo "v=DKIM1; h=sha256; k=rsa; " se existir
-    DKIMCode=$(echo "$DKIMCode" | sed 's/^v=DKIM1;[^p]*p=//')
-    
-    # Se ainda tiver "p=" no início, remover
-    DKIMCode=$(echo "$DKIMCode" | sed 's/^p=//')
-    
-    echo "-> Após remover prefixos: '${DKIMCode:0:50}...' (${#DKIMCode} chars)"
-    
-    # IMPORTANTE: Cortar no IDAQAB (fim da chave RSA)
-    # A chave RSA sempre termina com IDAQAB, IQAB, EQAB ou similar
-    if echo "$DKIMCode" | grep -q 'DAQAB'; then
-        DKIMCode=$(echo "$DKIMCode" | sed 's/\(.*DAQAB\).*/\1/')
-        echo "-> Cortado em DAQAB"
-    elif echo "$DKIMCode" | grep -q 'IDAQAB'; then
-        DKIMCode=$(echo "$DKIMCode" | sed 's/\(.*IDAQAB\).*/\1/')
-        echo "-> Cortado em IDAQAB"
-    elif echo "$DKIMCode" | grep -q 'IQAB'; then
-        DKIMCode=$(echo "$DKIMCode" | sed 's/\(.*IQAB\).*/\1/')
-        echo "-> Cortado em IQAB"
-    elif echo "$DKIMCode" | grep -q 'EQAB'; then
-        DKIMCode=$(echo "$DKIMCode" | sed 's/\(.*EQAB\).*/\1/')
-        echo "-> Cortado em EQAB"
-    elif echo "$DKIMCode" | grep -q 'AQAB'; then
-        DKIMCode=$(echo "$DKIMCode" | sed 's/\(.*AQAB\).*/\1/')
-        echo "-> Cortado em AQAB"
-    fi
-    
-    # Limpeza final - garantir apenas caracteres Base64 válidos
-    DKIMCode=$(echo "$DKIMCode" | sed 's/[^A-Za-z0-9+\/=]//g')
-    
-    echo "-> Código DKIM final:"
-    echo "   Tamanho: ${#DKIMCode} caracteres"
-    echo "   Início: ${DKIMCode:0:50}..."
-    echo "   Final: ...${DKIMCode: -50}"
-    
-    # Validação
-    if [ ${#DKIMCode} -lt 300 ]; then
-        echo "❌ ERRO: Chave DKIM muito curta (${#DKIMCode} caracteres)"
-        exit 1
-    fi
-    
-    # Verificar se é Base64 válido
-    if echo "$DKIMCode" | grep -qE '^[A-Za-z0-9+/]*=*$'; then
-        echo "✅ Chave DKIM válida (${#DKIMCode} caracteres)"
-    else
-        echo "❌ ERRO: Chave contém caracteres inválidos"
-        echo "Caracteres inválidos encontrados:"
-        echo "$DKIMCode" | sed 's/[A-Za-z0-9+\/=]//g' | od -c
-        exit 1
-    fi
-    
-    # Obter Zone ID
-    echo "-> Obtendo Zone ID do Cloudflare para $MAIN_DOMAIN..."
-    ZONE_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$MAIN_DOMAIN&status=active" \
-        -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
-        -H "X-Auth-Key: $CLOUDFLARE_API" \
-        -H "Content-Type: application/json" | jq -r '.result[0].id // empty')
-    
-    if [ -z "$ZONE_ID" ] || [ "$ZONE_ID" = "null" ]; then
-        echo "⚠️ Zone ID não encontrado para $MAIN_DOMAIN"
-        echo ""
-        echo "=== CONFIGURAÇÃO MANUAL DO DNS ==="
-        echo "Adicione o seguinte registro TXT no seu DNS:"
-        echo ""
-        echo "Nome: default._domainkey.$DOMAIN"
-        echo "Tipo: TXT"
-        echo "Valor: v=DKIM1; h=sha256; k=rsa; p=$DKIMCode"
-        echo "TTL: 300 (ou Auto)"
-        echo "=================================="
-    else
-        echo "✅ Zone ID obtido: $ZONE_ID"
-        
-        # Remover registros DKIM antigos
-        echo "-> Verificando registros DKIM existentes..."
-        EXISTING=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=default._domainkey.$DOMAIN&type=TXT" \
-            -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
-            -H "X-Auth-Key: $CLOUDFLARE_API" \
-            -H "Content-Type: application/json")
-        
-        echo "$EXISTING" | jq -r '.result[]?.id' 2>/dev/null | while read -r record_id; do
-            if [ -n "$record_id" ] && [ "$record_id" != "null" ]; then
-                echo "-> Deletando registro antigo: $record_id"
-                curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$record_id" \
-                    -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
-                    -H "X-Auth-Key: $CLOUDFLARE_API" > /dev/null
-            fi
-        done
-        
-        sleep 2
-        
-        # Criar registro DKIM
-        echo "-> Criando novo registro DKIM..."
-        
-        DKIM_CONTENT="v=DKIM1; h=sha256; k=rsa; p=$DKIMCode"
-        
-        echo "-> Detalhes do registro:"
-        echo "   Nome: default._domainkey.$DOMAIN"
-        echo "   Tipo: TXT"
-        echo "   Tamanho total: ${#DKIM_CONTENT} caracteres"
-        
-        RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
-            -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
-            -H "X-Auth-Key: $CLOUDFLARE_API" \
-            -H "Content-Type: application/json" \
-            --data "{
-                \"type\": \"TXT\",
-                \"name\": \"default._domainkey.$DOMAIN\",
-                \"content\": \"$DKIM_CONTENT\",
-                \"ttl\": 300,
-                \"proxied\": false
-            }")
-        
-        if echo "$RESPONSE" | jq -r '.success' | grep -q "true"; then
-            echo "✅ DKIM configurado com sucesso no Cloudflare!"
-            RECORD_ID=$(echo "$RESPONSE" | jq -r '.result.id' 2>/dev/null)
-            echo "✅ ID do registro: $RECORD_ID"
-            
-            # Verificar o registro criado
-            echo "-> Verificando registro criado..."
-            sleep 2
-            
-            VERIFY=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
-                -H "X-Auth-Email: $CLOUDFLARE_EMAIL" \
-                -H "X-Auth-Key: $CLOUDFLARE_API" \
-                -H "Content-Type: application/json")
-            
-            CREATED_NAME=$(echo "$VERIFY" | jq -r '.result.name' 2>/dev/null)
-            CREATED_TYPE=$(echo "$VERIFY" | jq -r '.result.type' 2>/dev/null)
-            
-            echo "✅ Registro verificado:"
-            echo "   Nome: $CREATED_NAME"
-            echo "   Tipo: $CREATED_TYPE"
-            
-        else
-            echo "❌ Erro ao criar registro DKIM:"
-            echo "$RESPONSE" | jq '.'
-            
-            ERROR_MSG=$(echo "$RESPONSE" | jq -r '.errors[0].message' 2>/dev/null)
-            if [ -n "$ERROR_MSG" ] && [ "$ERROR_MSG" != "null" ]; then
-                echo "❌ Mensagem de erro: $ERROR_MSG"
-            fi
-            
-            echo ""
-            echo "=== CONFIGURAÇÃO MANUAL NECESSÁRIA ==="
-            echo "Configure manualmente no Cloudflare:"
-            echo "Nome: default._domainkey.$DOMAIN"
-            echo "Tipo: TXT"
-            echo "Valor: v=DKIM1; h=sha256; k=rsa; p=$DKIMCode"
-            echo "======================================"
-        fi
-    fi
-    
-    echo "✅ Processo de configuração DNS finalizado!"
-else
-    echo "⚠️ Variáveis CLOUDFLARE_API ou CLOUDFLARE_EMAIL não definidas"
-    echo "⚠️ Pulando configuração automática do DNS"
+# Criar arquivo de usuários do Dovecot com a senha especificada
+echo -e "${YELLOW}Criando usuário admin@$DOMAIN...${NC}"
+echo "admin@$DOMAIN:{PLAIN}dwwzyd" > /etc/dovecot/users
+chmod 640 /etc/dovecot/users
+chown root:dovecot /etc/dovecot/users
+
+# Criar diretório do usuário admin
+mkdir -p /var/mail/vhosts/$DOMAIN/admin
+chown -R vmail:vmail /var/mail/vhosts/$DOMAIN/admin
+
+# Reiniciar serviços
+echo -e "${YELLOW}Reiniciando serviços...${NC}"
+systemctl restart opendkim
+systemctl restart postfix
+systemctl restart dovecot
+
+# Habilitar serviços na inicialização
+systemctl enable opendkim
+systemctl enable postfix
+systemctl enable dovecot
+
+# Baixar e instalar aplicação se URL fornecida
+if [ ! -z "$URL_APP_ZIP" ]; then
+    echo -e "${YELLOW}Baixando e instalando aplicação...${NC}"
+    cd /tmp
+    wget -O app.zip "$URL_APP_ZIP"
+    unzip -o app.zip -d /var/www/html/
+    chown -R www-data:www-data /var/www/html/
+    rm -f app.zip
 fi
 
-# Teste de validação da chave DKIM
-echo ""
-echo "-> Testando formato da chave DKIM..."
-if [ -n "$DKIMCode" ]; then
-    # Verificar se termina corretamente (com AQAB, IQAB, EQAB, DAQAB, IDAQAB)
-    if echo "$DKIMCode" | grep -qE '(AQAB|IQAB|EQAB|DAQAB|IDAQAB)$'; then
-        echo "✅ Chave DKIM tem terminação válida"
-    else
-        echo "⚠️ AVISO: Chave DKIM pode não ter terminação padrão RSA"
-        echo "   Final da chave: ...${DKIMCode: -20}"
-    fi
-    
-    # Verificar tamanho típico (geralmente entre 350-450 caracteres para RSA 2048)
-    KEY_LEN=${#DKIMCode}
-    if [ $KEY_LEN -ge 350 ] && [ $KEY_LEN -le 450 ]; then
-        echo "✅ Tamanho da chave DKIM está dentro do esperado ($KEY_LEN caracteres)"
-    else
-        echo "⚠️ Tamanho da chave DKIM incomum: $KEY_LEN caracteres"
-        echo "   (Esperado: 350-450 para RSA 2048)"
-    fi
-fi
-# ==============================================================================
-# 10. FINALIZAÇÃO
-# ==============================================================================
-echo "-> Configurando a mensagem de boas-vindas..."
-echo 'Lesk /2025' | sudo toilet --filter metal > /etc/motd
+# Configurar Nginx (básico)
+echo -e "${YELLOW}Configurando Nginx...${NC}"
+cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
+server {
+    listen 80;
+    server_name mail.$DOMAIN;
+    root /var/www/html;
+    index index.php index.html index.htm;
 
-echo ""
-echo "🎉 ================= CONFIGURAÇÃO CONCLUÍDA ================= 🎉"
-echo "✅ Domínio: $DOMAIN"
-echo "✅ SSL: Configurado"
-echo "✅ Email: Configurado"
-if [ -n "$ZONE_ID" ] && [ "$ZONE_ID" != "null" ]; then
-    echo "✅ DNS: Configurado automaticamente no Cloudflare"
-else
-    echo "⚠️ DNS: Configuração manual necessária"
-    echo ""
-    echo "==================== REGISTRO DKIM MANUAL ===================="
-    echo "Adicione o seguinte registro TXT na zona DNS:"
-    echo "Nome: default._domainkey.$DOMAIN"
-    echo "Valor:"
-    cat /etc/opendkim/keys/default.txt
-    echo "=============================================================="
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/var/run/php/php7.4-fpm.sock;
+    }
+
+    location ~ /\.ht {
+        deny all;
+    }
+}
+EOF
+
+ln -sf /etc/nginx/sites-available/mail.$DOMAIN /etc/nginx/sites-enabled/
+systemctl restart nginx
+
+# Configurar Cloudflare se as credenciais foram fornecidas
+if [ ! -z "$CLOUDFLARE_API" ] && [ ! -z "$CLOUDFLARE_EMAIL" ]; then
+    echo -e "${YELLOW}Configurando DNS no Cloudflare...${NC}"
+    
+    # Obter IP público
+    PUBLIC_IP=$(curl -s ifconfig.me)
+    
+    # Aqui você pode adicionar a lógica para criar registros DNS via API do Cloudflare
+    # Exemplo: criar registro A para mail.$DOMAIN apontando para $PUBLIC_IP
 fi
-echo ""
-echo "🔄 O servidor será reiniciado em 15 segundos..."
-sleep 15
-reboot
+
+# Exibir chave DKIM
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Configuração concluída!${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo -e "${YELLOW}Chave DKIM pública (adicione ao DNS):${NC}"
+cat /etc/opendkim/keys/$DOMAIN/mail.txt
+
+# Testar configuração
+echo -e "${YELLOW}Testando configurações...${NC}"
+postfix check
+dovecot -n > /dev/null 2>&1 && echo -e "${GREEN}Dovecot: OK${NC}" || echo -e "${RED}Dovecot: ERRO${NC}"
+
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Usuário SMTP criado:${NC}"
+echo -e "${GREEN}Email: admin@$DOMAIN${NC}"
+echo -e "${GREEN}Senha: dwwzyd${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Portas configuradas:${NC}"
+echo -e "${GREEN}SMTP: 25${NC}"
+echo -e "${GREEN}Submission: 587${NC}"
+echo -e "${GREEN}SMTPS: 465${NC}"
+echo -e "${GREEN}IMAP: 143${NC}"
+echo -e "${GREEN}IMAPS: 993${NC}"
+echo -e "${GREEN}POP3: 110${NC}"
+echo -e "${GREEN}POP3S: 995${NC}"
+echo -e "${GREEN}========================================${NC}"
+
+# Log de instalação
+echo "Instalação concluída em $(date)" >> /var/log/mail-setup.log
+echo "Domínio: $DOMAIN" >> /var/log/mail-setup.log
+echo "Usuário: admin@$DOMAIN" >> /var/log/mail-setup.log
+
+# Obter IP público
+PUBLIC_IP=$(curl -s ifconfig.me)
+
+# Extrair chave DKIM pública
+DKIM_KEY=$(cat /etc/opendkim/keys/$DOMAIN/mail.txt | grep -oP '(?<=p=)[^"]+' | tr -d '\n\t\r ";' | sed 's/)//')
+
+# Criar página HTML com configurações DNS
+echo -e "${YELLOW}Criando página de configuração DNS...${NC}"
+cat > /var/www/html/lesk.html << EOF
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configurações DNS - $DOMAIN</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .header p {
+            font-size: 1.2rem;
+            opacity: 0.95;
+        }
+        
+        .dns-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s;
+        }
+        
+        .dns-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.25);
+        }
+        
+        .dns-type {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+        }
+        
+        .dns-info {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .dns-label {
+            font-weight: 600;
+            color: #555;
+            padding: 8px 0;
+        }
+        
+        .dns-value {
+            background: #f5f5f5;
+            padding: 8px 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            word-break: break-all;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        .dns-value:hover {
+            background: #e8e8e8;
+        }
+        
+        .copy-btn {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 5px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+            opacity: 0;
+        }
+        
+        .dns-value:hover .copy-btn {
+            opacity: 1;
+        }
+        
+        .copy-btn:hover {
+            background: #764ba2;
+            transform: translateY(-50%) scale(1.05);
+        }
+        
+        .copy-btn.copied {
+            background: #4caf50;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        
+        .status-required {
+            background: #ff4444;
+            color: white;
+        }
+        
+        .status-recommended {
+            background: #ff9800;
+            color: white;
+        }
+        
+        .status-optional {
+            background: #4caf50;
+            color: white;
+        }
+        
+        .info-box {
+            background: #f0f7ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 5px;
+        }
+        
+        .info-box h3 {
+            color: #1976D2;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+        }
+        
+        .info-box p {
+            color: #555;
+            line-height: 1.6;
+        }
+        
+        .server-info {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .server-info h2 {
+            color: #333;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .server-info h2::before {
+            content: "🖥️";
+            margin-right: 10px;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        
+        .info-item {
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 10px;
+        }
+        
+        .info-item strong {
+            color: #667eea;
+            display: block;
+            margin-bottom: 5px;
+        }
+        
+        .copy-all-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            margin: 20px auto;
+            display: block;
+            transition: all 0.3s;
+        }
+        
+        .copy-all-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        @media (max-width: 768px) {
+            .dns-info {
+                grid-template-columns: 1fr;
+            }
+            
+            .dns-label {
+                font-size: 12px;
+                padding: 5px 0;
+            }
+            
+            .header h1 {
+                font-size: 1.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚙️ Configurações DNS</h1>
+            <p>Domínio: $DOMAIN</p>
+        </div>
+        
+        <div class="server-info">
+            <h2>Informações do Servidor</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <strong>IP do Servidor:</strong>
+                    <span>$PUBLIC_IP</span>
+                </div>
+                <div class="info-item">
+                    <strong>Hostname:</strong>
+                    <span>mail.$DOMAIN</span>
+                </div>
+                <div class="info-item">
+                    <strong>Usuário SMTP:</strong>
+                    <span>admin@$DOMAIN</span>
+                </div>
+                <div class="info-item">
+                    <strong>Senha SMTP:</strong>
+                    <span>dwwzyd</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Registro A -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO A</span>
+            <span class="status-badge status-required">Obrigatório</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    mail
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Conteúdo:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    $PUBLIC_IP
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o Registro A</h3>
+                <p>Este registro aponta o subdomínio mail.$DOMAIN para o IP do seu servidor. É essencial para que o servidor de email seja encontrado.</p>
+            </div>
+        </div>
+
+        <!-- Registro MX -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO MX</span>
+            <span class="status-badge status-required">Obrigatório</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    @
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Servidor de Email:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    mail.$DOMAIN
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Prioridade:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    10
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o Registro MX</h3>
+                <p>Define qual servidor é responsável por receber emails para o domínio $DOMAIN. A prioridade 10 é padrão para servidor principal.</p>
+            </div>
+        </div>
+
+        <!-- Registro SPF -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO TXT (SPF)</span>
+            <span class="status-badge status-required">Obrigatório</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    @
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Conteúdo:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    v=spf1 ip4:$PUBLIC_IP ~all
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o Registro SPF</h3>
+                <p>SPF (Sender Policy Framework) autoriza o IP $PUBLIC_IP a enviar emails em nome do domínio $DOMAIN, ajudando a prevenir spoofing.</p>
+            </div>
+        </div>
+
+        <!-- Registro DKIM -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO TXT (DKIM)</span>
+            <span class="status-badge status-recommended">Recomendado</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    mail._domainkey
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Conteúdo:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    v=DKIM1; k=rsa; p=$DKIM_KEY
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o Registro DKIM</h3>
+                <p>DKIM adiciona uma assinatura digital aos emails enviados, provando que são autênticos e não foram modificados. Chave RSA de 1024 bits.</p>
+            </div>
+        </div>
+
+        <!-- Registro DMARC -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO TXT (DMARC)</span>
+            <span class="status-badge status-recommended">Recomendado</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    _dmarc
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Conteúdo:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    v=DMARC1; p=quarantine; rua=mailto:admin@$DOMAIN; ruf=mailto:admin@$DOMAIN; fo=1; adkim=r; aspf=r; pct=100; rf=afrf; sp=quarantine
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o Registro DMARC</h3>
+                <p>DMARC define políticas de como lidar com emails que falham nas verificações SPF/DKIM. Configurado para quarentena com relatórios para admin@$DOMAIN.</p>
+            </div>
+        </div>
+
+        <!-- Registro PTR (Reverso) -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO PTR (Reverso)</span>
+            <span class="status-badge status-optional">Opcional</span>
+            <div class="dns-info">
+                <div class="dns-label">IP Reverso:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    $PUBLIC_IP
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Aponta para:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    mail.$DOMAIN
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o Registro PTR</h3>
+                <p>O registro PTR (DNS reverso) deve ser configurado com seu provedor de hospedagem/ISP. Melhora a reputação do servidor de email.</p>
+            </div>
+        </div>
+
+        <!-- Registro Autodiscover -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO CNAME (Autodiscover)</span>
+            <span class="status-badge status-optional">Opcional</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    autodiscover
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Aponta para:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    mail.$DOMAIN
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o Autodiscover</h3>
+                <p>Permite que clientes de email (Outlook, Thunderbird) configurem automaticamente as configurações do servidor.</p>
+            </div>
+        </div>
+
+        <button class="copy-all-btn" onclick="copyAllConfigs()">📋 Copiar Todas as Configurações</button>
+    </div>
+
+    <script>
+        function copyToClipboard(element) {
+            const text = element.textContent.replace('Copiar', '').trim();
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = element.querySelector('.copy-btn');
+                if (btn) {
+                    const originalText = btn.textContent;
+                    btn.textContent = '✓ Copiado!';
+                    btn.classList.add('copied');
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                        btn.classList.remove('copied');
+                    }, 2000);
+                }
+            });
+        }
+
+        function copyAllConfigs() {
+            const configs = \`
+=== CONFIGURAÇÕES DNS PARA $DOMAIN ===
+
+REGISTRO A:
+Nome: mail
+Conteúdo: $PUBLIC_IP
+TTL: 3600
+
+REGISTRO MX:
+Nome: @
+Servidor: mail.$DOMAIN
+Prioridade: 10
+TTL: 3600
+
+REGISTRO SPF (TXT):
+Nome: @
+Conteúdo: v=spf1 ip4:$PUBLIC_IP ~all
+TTL: 3600
+
+REGISTRO DKIM (TXT):
+Nome: mail._domainkey
+Conteúdo: v=DKIM1; k=rsa; p=$DKIM_KEY
+TTL: 3600
+
+REGISTRO DMARC (TXT):
+Nome: _dmarc
+Conteúdo: v=DMARC1; p=quarantine; rua=mailto:admin@$DOMAIN; ruf=mailto:admin@$DOMAIN; fo=1; adkim=r; aspf=r; pct=100; rf=afrf; sp=quarantine
+TTL: 3600
+
+REGISTRO PTR (Reverso):
+IP: $PUBLIC_IP → mail.$DOMAIN
+(Configurar com provedor de hospedagem)
+
+REGISTRO AUTODISCOVER (CNAME):
+Nome: autodiscover
+Aponta para: mail.$DOMAIN
+TTL: 3600
+
+=== INFORMAÇÕES DO SERVIDOR ===
+IP: $PUBLIC_IP
+Hostname: mail.$DOMAIN
+Usuário SMTP: admin@$DOMAIN
+Senha: dwwzyd
+Portas: 25, 587, 465 (SMTP) | 143, 993 (IMAP) | 110, 995 (POP3)
+\`;
+
+            navigator.clipboard.writeText(configs).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✓ Todas as Configurações Copiadas!';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 3000);
+            });
+        }
+
+        // Adicionar efeito de fade-in ao carregar
+        document.addEventListener('DOMContentLoaded', () => {
+            const cards = document.querySelectorAll('.dns-card, .server-info');
+            cards.forEach((card, index) => {
+                card.style.opacity = '0';
+                card.style.transform = 'translateY(20px)';
+                setTimeout(() => {
+                    card.style.transition = 'opacity 0.5s, transform 0.5s';
+                    card.style.opacity = '1';
+                    card.style.transform = 'translateY(0)';
+                }, index * 100);
+            });
+        });
+    </script>
+</body>
+</html>
+EOF
+
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Página de configuração DNS criada!${NC}"
+echo -e "${GREEN}Acesse: http://$PUBLIC_IP/lesk.html${NC}"
+echo -e "${GREEN}========================================${NC}"
+
+exit 0
