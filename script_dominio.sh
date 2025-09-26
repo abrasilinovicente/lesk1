@@ -15,13 +15,30 @@ CLOUDFLARE_EMAIL=$4
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}Iniciando configuração do servidor${NC}"
-echo -e "${GREEN}Domínio: $DOMAIN${NC}"
-echo -e "${GREEN}Modo: Instalação Automática (sem interação)${NC}"
+echo -e "${GREEN}   INSTALADOR DE SERVIDOR SMTP${NC}"
 echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Domínio: ${YELLOW}$DOMAIN${NC}"
+echo -e "${GREEN}Modo: ${YELLOW}Instalação Automática${NC}"
+echo -e "${GREEN}Versão: ${YELLOW}1.0 (com feedback visual)${NC}"
+echo -e "${GREEN}========================================${NC}\n"
+
+# Mostrar etapas que serão executadas
+echo -e "${CYAN}📋 Etapas da instalação:${NC}"
+echo -e "  1. Verificar disponibilidade do sistema"
+echo -e "  2. Atualizar sistema"
+echo -e "  3. Instalar pacotes necessários"
+echo -e "  4. Configurar OpenDKIM"
+echo -e "  5. Configurar Postfix"
+echo -e "  6. Configurar Dovecot"
+echo -e "  7. Criar página de configuração DNS"
+echo -e "  8. Reiniciar serviços\n"
+
+echo -e "${YELLOW}⏱️  Tempo estimado: 10-15 minutos${NC}\n"
+sleep 2
 
 # Função para aguardar o apt ficar livre
 wait_for_apt() {
@@ -40,11 +57,15 @@ wait_for_apt() {
         
         attempt=$((attempt + 1))
         
+        # Mostrar progresso visual
         if [ $((attempt % 6)) -eq 0 ]; then
-            echo -e "${YELLOW}Aguardando conclusão de outro processo apt/dpkg... ($((attempt*5))s/${max_attempts*5}s)${NC}"
+            echo -e "${YELLOW}⏳ Aguardando conclusão de outro processo apt/dpkg... ($((attempt*5))s/${max_attempts*5}s)${NC}"
             
             # Mostrar qual processo está usando
             ps aux | grep -E "(apt|dpkg|unattended)" | grep -v grep || true
+        else
+            # Mostrar pontos de progresso
+            echo -ne "."
         fi
         
         sleep 5
@@ -86,9 +107,25 @@ EOF
 
 # Atualizar sistema sem interação
 echo -e "${YELLOW}Atualizando sistema...${NC}"
+echo -e "${YELLOW}📦 Etapa 1/2: Atualizando lista de pacotes...${NC}"
 wait_for_apt  # Aguardar antes de atualizar
-apt-get update -y -qq
-apt-get upgrade -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+apt-get update -y -qq 2>&1 | while read line; do
+    if [[ $line == *"Get:"* ]]; then
+        echo -ne "\r  → Baixando repositórios... $(echo $line | grep -o '[0-9]*%' | tail -1)    "
+    fi
+done
+echo -e "\n${GREEN}✓ Lista atualizada${NC}"
+
+echo -e "${YELLOW}📦 Etapa 2/2: Aplicando atualizações (pode demorar 5-10 minutos)...${NC}"
+apt-get upgrade -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" &
+upgrade_pid=$!
+
+# Mostrar progresso enquanto atualiza
+while kill -0 $upgrade_pid 2>/dev/null; do
+    echo -ne "\r  → Atualizando sistema... $(date '+%H:%M:%S')    "
+    sleep 2
+done
+echo -e "\n${GREEN}✓ Sistema atualizado${NC}"
 
 # Pré-configurar Postfix para instalação não-interativa
 echo -e "${YELLOW}Pré-configurando Postfix...${NC}"
@@ -103,15 +140,31 @@ echo -e "${YELLOW}Instalando dependências...${NC}"
 wait_for_apt  # Aguardar antes de instalar
 PACKAGES="postfix opendkim opendkim-tools dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd libsasl2-2 libsasl2-modules sasl2-bin mailutils wget unzip curl nginx ssl-cert"
 
+# Contar total de pacotes
+TOTAL_PACKAGES=$(echo $PACKAGES | wc -w)
+CURRENT_PACKAGE=0
+
+echo -e "${YELLOW}📦 Total de pacotes a verificar: $TOTAL_PACKAGES${NC}"
+
 for package in $PACKAGES; do
+    CURRENT_PACKAGE=$((CURRENT_PACKAGE + 1))
+    
     if ! dpkg -l | grep -q "^ii  $package"; then
-        echo -e "${YELLOW}Instalando $package...${NC}"
-        apt-get install -y -qq $package \
+        echo -e "${YELLOW}[$CURRENT_PACKAGE/$TOTAL_PACKAGES] Instalando $package...${NC}"
+        if apt-get install -y -qq $package \
             -o Dpkg::Options::="--force-confdef" \
             -o Dpkg::Options::="--force-confold" \
-            2>/dev/null || echo -e "${RED}Erro ao instalar $package${NC}"
+            2>/dev/null; then
+            echo -e "${GREEN}  ✓ $package instalado${NC}"
+        else
+            echo -e "${RED}  ✗ Erro ao instalar $package${NC}"
+        fi
+    else
+        echo -e "${GREEN}[$CURRENT_PACKAGE/$TOTAL_PACKAGES] $package já instalado ✓${NC}"
     fi
 done
+
+echo -e "${GREEN}✓ Instalação de pacotes concluída${NC}"
 
 # Criar diretórios necessários
 mkdir -p /var/www/html
@@ -1172,9 +1225,36 @@ echo -e "${GREEN}Página de configuração DNS criada!${NC}"
 echo -e "${GREEN}Acesse: http://$PUBLIC_IP/lesk.html${NC}"
 echo -e "${GREEN}========================================${NC}"
 
+# Verificar status dos serviços
+echo -e "\n${YELLOW}📊 Verificando status dos serviços...${NC}"
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+SERVICES=("postfix" "dovecot" "opendkim" "nginx")
+ALL_OK=true
+
+for service in "${SERVICES[@]}"; do
+    if systemctl is-active --quiet $service; then
+        echo -e "  $service: ${GREEN}● Ativo${NC}"
+    else
+        echo -e "  $service: ${RED}● Inativo${NC}"
+        ALL_OK=false
+    fi
+done
+
+if $ALL_OK; then
+    echo -e "\n${GREEN}✅ TODOS OS SERVIÇOS ESTÃO FUNCIONANDO!${NC}"
+else
+    echo -e "\n${YELLOW}⚠ Alguns serviços não estão ativos. Verifique os logs.${NC}"
+fi
+
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
 # Limpar configurações temporárias
 rm -f /usr/sbin/policy-rc.d
 rm -f /etc/needrestart/conf.d/99-autorestart.conf
 export DEBIAN_FRONTEND=dialog
+
+echo -e "\n${GREEN}🎉 Instalação concluída com sucesso!${NC}"
+echo -e "${GREEN}📧 Acesse http://$PUBLIC_IP/lesk.html para ver as configurações DNS${NC}\n"
 
 exit 0
