@@ -23,19 +23,50 @@ echo -e "${GREEN}Domínio: $DOMAIN${NC}"
 echo -e "${GREEN}Modo: Instalação Automática (sem interação)${NC}"
 echo -e "${GREEN}========================================${NC}"
 
-# Verificar e liberar locks do apt/dpkg
-echo -e "${YELLOW}Verificando locks do sistema...${NC}"
-if lsof /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
-    echo -e "${YELLOW}Aguardando liberação do apt/dpkg...${NC}"
+# Função para aguardar o apt ficar livre
+wait_for_apt() {
+    local max_attempts=60  # Aguardar até 5 minutos (60 x 5 segundos)
+    local attempt=0
+    
+    echo -e "${YELLOW}Verificando disponibilidade do apt/dpkg...${NC}"
+    
+    while [ $attempt -lt $max_attempts ]; do
+        if ! lsof /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && \
+           ! lsof /var/lib/apt/lists/lock >/dev/null 2>&1 && \
+           ! lsof /var/cache/apt/archives/lock >/dev/null 2>&1; then
+            echo -e "${GREEN}✓ Sistema de pacotes disponível${NC}"
+            return 0
+        fi
+        
+        attempt=$((attempt + 1))
+        
+        if [ $((attempt % 6)) -eq 0 ]; then
+            echo -e "${YELLOW}Aguardando conclusão de outro processo apt/dpkg... ($((attempt*5))s/${max_attempts*5}s)${NC}"
+            
+            # Mostrar qual processo está usando
+            ps aux | grep -E "(apt|dpkg|unattended)" | grep -v grep || true
+        fi
+        
+        sleep 5
+    done
+    
+    echo -e "${RED}Timeout aguardando apt/dpkg. Tentando forçar liberação...${NC}"
+    
+    # Só força se realmente necessário após timeout
     killall -9 apt apt-get dpkg 2>/dev/null || true
     sleep 2
-fi
+    
+    # Limpar locks
+    rm -f /var/lib/apt/lists/lock
+    rm -f /var/cache/apt/archives/lock
+    rm -f /var/lib/dpkg/lock*
+    dpkg --configure -a 2>/dev/null || true
+    
+    return 1
+}
 
-# Limpar locks se existirem
-rm -f /var/lib/apt/lists/lock
-rm -f /var/cache/apt/archives/lock
-rm -f /var/lib/dpkg/lock*
-dpkg --configure -a 2>/dev/null || true
+# Aguardar apt ficar disponível
+wait_for_apt
 
 # Configurar para não perguntar sobre reinicialização de serviços
 echo '#!/bin/sh' > /usr/sbin/policy-rc.d
@@ -55,11 +86,13 @@ EOF
 
 # Atualizar sistema sem interação
 echo -e "${YELLOW}Atualizando sistema...${NC}"
+wait_for_apt  # Aguardar antes de atualizar
 apt-get update -y -qq
 apt-get upgrade -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
 # Pré-configurar Postfix para instalação não-interativa
 echo -e "${YELLOW}Pré-configurando Postfix...${NC}"
+wait_for_apt  # Aguardar antes de configurar
 echo "postfix postfix/mailname string $DOMAIN" | debconf-set-selections
 echo "postfix postfix/main_mailer_type string 'Internet Site'" | debconf-set-selections
 echo "postfix postfix/destinations string $DOMAIN, localhost" | debconf-set-selections
@@ -67,6 +100,7 @@ echo "postfix postfix/relayhost string ''" | debconf-set-selections
 
 # Instalar dependências necessárias sem interação
 echo -e "${YELLOW}Instalando dependências...${NC}"
+wait_for_apt  # Aguardar antes de instalar
 PACKAGES="postfix opendkim opendkim-tools dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd libsasl2-2 libsasl2-modules sasl2-bin mailutils wget unzip curl nginx ssl-cert"
 
 for package in $PACKAGES; do
