@@ -4,11 +4,9 @@
 DOMAIN=$1
 URL_APP_ZIP=$2
 URL_ENVIO_ZIP=$3
-UNUSED_PARAM=$4
-URL_OPENDKIM_CONF=$5
-URL_POSTFIX_CONF=$6
-CLOUDFLARE_API=$7
-CLOUDFLARE_EMAIL=$8
+URL_OPENDKIM_CONF=$4
+CLOUDFLARE_API=$5
+CLOUDFLARE_EMAIL=$6
 
 # Cores para output
 RED='\033[0;31m'
@@ -73,43 +71,99 @@ echo "127.0.0.1" >> /etc/opendkim/TrustedHosts
 echo "localhost" >> /etc/opendkim/TrustedHosts
 echo ".$DOMAIN" >> /etc/opendkim/TrustedHosts
 
-# Baixar e configurar Postfix
-if [ ! -z "$URL_POSTFIX_CONF" ]; then
-    echo -e "${YELLOW}Baixando configuração do Postfix...${NC}"
-    wget -O /etc/postfix/main.cf "$URL_POSTFIX_CONF"
-fi
+# Criar e configurar Postfix main.cf
+echo -e "${YELLOW}Configurando Postfix main.cf...${NC}"
+cat > /etc/postfix/main.cf << EOF
+# =================================================================
+# Arquivo de Configuração Otimizado para Postfix (main.cf)
+# Configurado automaticamente para $DOMAIN
+# =================================================================
 
-# Adicionar configurações específicas do domínio ao Postfix
-echo -e "${YELLOW}Configurando Postfix para $DOMAIN...${NC}"
-cat >> /etc/postfix/main.cf << EOF
+# --- Configurações Gerais ---
+smtpd_banner = \$myhostname ESMTP \$mail_name (Ubuntu)
+smtp_address_preference = ipv4
+biff = no
+append_dot_mydomain = no
+readme_directory = no
+recipient_delimiter = +
+mailbox_size_limit = 0
+compatibility_level = 2
 
-# Configurações específicas do domínio
+# --- Configurações de Identidade do Servidor ---
 myhostname = mail.$DOMAIN
 mydomain = $DOMAIN
-myorigin = \$mydomain
+myorigin = /etc/mailname
 mydestination = \$myhostname, localhost.\$mydomain, localhost, \$mydomain
 mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
+relayhost =
 
-# Configuração Dovecot SASL
+# --- Configurações de Rede ---
+inet_interfaces = all
+inet_protocols = ipv4
+
+# --- Configurações de logging ---
+maillog_file = /var/log/postfix.log
+maillog_file_prefixes = /var/log
+maillog_file_rotate_suffix = %Y%m%d-%H%M%S
+maillog_file_compressor = gzip
+
+# --- Aliases ---
+alias_maps = hash:/etc/aliases
+alias_database = hash:/etc/aliases
+
+# --- Configurações de Relay e Restrições ---
+smtpd_relay_restrictions =
+    permit_mynetworks
+    permit_sasl_authenticated
+    defer_unauth_destination
+    reject_unauth_destination
+
+# --- Configurações de TLS/SSL ---
+smtpd_use_tls = yes
+EOF
+
+# Verificar e configurar certificados SSL
+if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+    echo -e "${GREEN}Certificados Let's Encrypt encontrados${NC}"
+    cat >> /etc/postfix/main.cf << EOF
+smtpd_tls_cert_file = /etc/letsencrypt/live/$DOMAIN/fullchain.pem
+smtpd_tls_key_file = /etc/letsencrypt/live/$DOMAIN/privkey.pem
+EOF
+else
+    echo -e "${YELLOW}Usando certificados temporários (snake oil)${NC}"
+    cat >> /etc/postfix/main.cf << EOF
+smtpd_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem
+smtpd_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key
+EOF
+fi
+
+# Continuar configuração do Postfix
+cat >> /etc/postfix/main.cf << EOF
+smtpd_tls_session_cache_database = btree:\${data_directory}/smtpd_scache
+smtp_tls_security_level = may
+smtp_tls_session_cache_database = btree:\${data_directory}/smtp_scache
+smtpd_tls_protocols = !SSLv2, !SSLv3
+smtpd_tls_mandatory_protocols = !SSLv2, !SSLv3
+smtpd_tls_ciphers = high
+smtpd_tls_mandatory_ciphers = high
+smtpd_tls_loglevel = 1
+smtp_tls_loglevel = 1
+
+# --- INTEGRAÇÃO COM OPENDKIM ---
+milter_protocol = 2
+milter_default_action = accept
+smtpd_milters = inet:localhost:8891
+non_smtpd_milters = inet:localhost:8891
+
+# --- CONFIGURAÇÃO DOVECOT SASL ---
 smtpd_sasl_type = dovecot
 smtpd_sasl_path = private/auth
 smtpd_sasl_auth_enable = yes
 smtpd_sasl_security_options = noanonymous
-smtpd_sasl_local_domain = \$mydomain
+smtpd_sasl_local_domain = $DOMAIN
 broken_sasl_auth_clients = yes
 
-# Restrições de relay
-smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, defer_unauth_destination
-smtpd_recipient_restrictions = permit_sasl_authenticated, permit_mynetworks, reject_unauth_destination
-
-# TLS/SSL
-smtpd_use_tls = yes
-smtpd_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem
-smtpd_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key
-smtpd_tls_security_level = may
-smtp_tls_security_level = may
-
-# Virtual mailbox
+# --- VIRTUAL MAILBOX PARA DOVECOT ---
 virtual_transport = lmtp:unix:private/dovecot-lmtp
 virtual_mailbox_domains = $DOMAIN
 virtual_mailbox_base = /var/mail/vhosts
@@ -118,16 +172,56 @@ virtual_minimum_uid = 100
 virtual_uid_maps = static:5000
 virtual_gid_maps = static:5000
 
-# Limites de mensagem
-message_size_limit = 52428800
-mailbox_size_limit = 0
+# --- RESTRIÇÕES DE SEGURANÇA ADICIONAIS ---
+smtpd_helo_required = yes
+smtpd_helo_restrictions = 
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_invalid_helo_hostname,
+    reject_non_fqdn_helo_hostname
 
-# OpenDKIM
-milter_protocol = 6
-milter_default_action = accept
-smtpd_milters = inet:localhost:12301
-non_smtpd_milters = inet:localhost:12301
+smtpd_sender_restrictions = 
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_non_fqdn_sender,
+    reject_unknown_sender_domain
+
+smtpd_recipient_restrictions = 
+    permit_sasl_authenticated,
+    permit_mynetworks,
+    reject_unauth_destination,
+    reject_invalid_hostname,
+    reject_non_fqdn_hostname,
+    reject_non_fqdn_sender,
+    reject_non_fqdn_recipient,
+    reject_unknown_sender_domain,
+    reject_unknown_recipient_domain,
+    reject_rbl_client zen.spamhaus.org,
+    reject_rhsbl_client dbl.spamhaus.org,
+    reject_rhsbl_sender dbl.spamhaus.org
+
+# --- LIMITES E CONFIGURAÇÕES DE PERFORMANCE ---
+message_size_limit = 52428800
+maximal_queue_lifetime = 3d
+bounce_queue_lifetime = 3d
+maximal_backoff_time = 4000s
+minimal_backoff_time = 300s
+queue_run_delay = 300s
+
+# --- LIMITES DE CONEXÃO ---
+smtpd_client_connection_count_limit = 50
+smtpd_client_connection_rate_limit = 100
+anvil_rate_time_unit = 60s
+
+# --- CONFIGURAÇÕES ANTI-SPAM ---
+smtpd_data_restrictions = reject_unauth_pipelining
+smtpd_error_sleep_time = 1s
+smtpd_soft_error_limit = 10
+smtpd_hard_error_limit = 20
 EOF
+
+# Criar arquivo /etc/mailname
+echo "$DOMAIN" > /etc/mailname
 
 # Criar arquivo master.cf atualizado
 echo -e "${YELLOW}Configurando master.cf...${NC}"
