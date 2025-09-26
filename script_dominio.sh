@@ -2,11 +2,9 @@
 
 # Receber parâmetros
 DOMAIN=$1
-URL_APP_ZIP=$2
-URL_ENVIO_ZIP=$3
-URL_OPENDKIM_CONF=$4
-CLOUDFLARE_API=$5
-CLOUDFLARE_EMAIL=$6
+URL_OPENDKIM_CONF=$2
+CLOUDFLARE_API=$3
+CLOUDFLARE_EMAIL=$4
 
 # Cores para output
 RED='\033[0;31m'
@@ -425,36 +423,17 @@ systemctl enable opendkim
 systemctl enable postfix
 systemctl enable dovecot
 
-# Baixar e instalar aplicação se URL fornecida
-if [ ! -z "$URL_APP_ZIP" ]; then
-    echo -e "${YELLOW}Baixando e instalando aplicação...${NC}"
-    cd /tmp
-    wget -O app.zip "$URL_APP_ZIP"
-    unzip -o app.zip -d /var/www/html/
-    chown -R www-data:www-data /var/www/html/
-    rm -f app.zip
-fi
-
-# Configurar Nginx (básico)
+# Configurar Nginx (básico para servir a página lesk.html)
 echo -e "${YELLOW}Configurando Nginx...${NC}"
 cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
 server {
     listen 80;
-    server_name mail.$DOMAIN;
+    server_name mail.$DOMAIN $PUBLIC_IP;
     root /var/www/html;
-    index index.php index.html index.htm;
+    index index.html index.htm lesk.html;
 
     location / {
-        try_files \$uri \$uri/ /index.php?\$query_string;
-    }
-
-    location ~ \.php$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/var/run/php/php7.4-fpm.sock;
-    }
-
-    location ~ /\.ht {
-        deny all;
+        try_files \$uri \$uri/ =404;
     }
 }
 EOF
