@@ -7,6 +7,7 @@ export NEEDRESTART_SUSPEND=1
 
 # Receber parâmetros
 DOMAIN=$1
+URL_OPENDKIM_CONF=$2
 CLOUDFLARE_API=$3
 CLOUDFLARE_EMAIL=$4
 
@@ -172,29 +173,17 @@ echo "127.0.0.1 mail.$DOMAIN" >> /etc/hosts
 # Configurar OpenDKIM com chave de 1024 bits
 echo -e "${YELLOW}Configurando OpenDKIM com chave RSA 1024...${NC}"
 
-# Criar configuração do OpenDKIM diretamente (sem depender de arquivo externo)
-echo -e "${YELLOW}  → Criando configuração inline do OpenDKIM...${NC}"
-cat > /etc/opendkim.conf << 'EOF'
-# Configuração OpenDKIM integrada ao script
-Mode                    sv
+# Criar configuração do OpenDKIM diretamente (versão simplificada que funciona)
+echo -e "${YELLOW}  → Criando configuração do OpenDKIM...${NC}"
+cat > /etc/opendkim.conf << EOF
+Domain                  $DOMAIN
+KeyFile                 /etc/opendkim/keys/$DOMAIN/mail.private
+Selector                mail
+Socket                  inet:8891@localhost
+PidFile                 /var/run/opendkim/opendkim.pid
+UserID                  opendkim:opendkim
 Syslog                  yes
-SyslogSuccess          yes
-LogWhy                 yes
-Domain                  *
-SubDomains             yes
-AutoRestart            yes
-AutoRestartRate        10/1h
-Canonicalization       relaxed/simple
-SignatureAlgorithm     rsa-sha256
-MinimumKeyBits         1024
-KeyTable               /etc/opendkim/KeyTable
-SigningTable           refile:/etc/opendkim/SigningTable
-ExternalIgnoreList     /etc/opendkim/TrustedHosts
-InternalHosts          /etc/opendkim/TrustedHosts
-Socket                 inet:8891@localhost
-PidFile                /var/run/opendkim/opendkim.pid
-UMask                  002
-UserID                 opendkim:opendkim
+LogWhy                  yes
 EOF
 
 echo -e "${GREEN}  ✓ Configuração criada${NC}"
@@ -206,7 +195,7 @@ mkdir -p /var/log/opendkim
 chown -R opendkim:opendkim /var/run/opendkim
 chown -R opendkim:opendkim /var/log/opendkim 2>/dev/null || true
 
-# Gerar chave DKIM
+# Gerar chave DKIM simples sem tabelas
 echo -e "${YELLOW}  → Gerando chave DKIM 1024 bits...${NC}"
 cd /etc/opendkim/keys/$DOMAIN
 opendkim-genkey -b 1024 -s mail -d $DOMAIN 2>/dev/null || {
@@ -228,12 +217,9 @@ else
     chmod 600 mail.private
 fi
 
-# Criar arquivos de configuração OpenDKIM
-echo "mail._domainkey.$DOMAIN $DOMAIN:mail:/etc/opendkim/keys/$DOMAIN/mail.private" >> /etc/opendkim/KeyTable
-echo "*@$DOMAIN mail._domainkey.$DOMAIN" >> /etc/opendkim/SigningTable
-echo "127.0.0.1" >> /etc/opendkim/TrustedHosts
-echo "localhost" >> /etc/opendkim/TrustedHosts
-echo ".$DOMAIN" >> /etc/opendkim/TrustedHosts
+# Ajustar permissões finais
+chown -R opendkim:opendkim /etc/opendkim
+chown -R opendkim:opendkim /var/run/opendkim
 
 # Criar e configurar Postfix main.cf
 echo -e "${YELLOW}Configurando Postfix main.cf...${NC}"
@@ -257,7 +243,7 @@ compatibility_level = 2
 myhostname = mail.$DOMAIN
 mydomain = $DOMAIN
 myorigin = /etc/mailname
-mydestination = \$myhostname, localhost.\$mydomain, localhost
+mydestination = \$myhostname, localhost.\$mydomain, localhost, \$mydomain
 mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
 relayhost =
 
