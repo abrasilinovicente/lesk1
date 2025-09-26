@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Configurar para modo não-interativo
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+
 # Receber parâmetros
 DOMAIN=$1
 URL_OPENDKIM_CONF=$2
@@ -15,16 +20,40 @@ NC='\033[0m'
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Iniciando configuração do servidor${NC}"
 echo -e "${GREEN}Domínio: $DOMAIN${NC}"
+echo -e "${GREEN}Modo: Instalação Automática (sem interação)${NC}"
 echo -e "${GREEN}========================================${NC}"
 
-# Atualizar sistema
-echo -e "${YELLOW}Atualizando sistema...${NC}"
-apt-get update -y
-apt-get upgrade -y
+# Configurar para não perguntar sobre reinicialização de serviços
+echo '#!/bin/sh' > /usr/sbin/policy-rc.d
+echo 'exit 101' >> /usr/sbin/policy-rc.d
+chmod +x /usr/sbin/policy-rc.d
 
-# Instalar dependências necessárias
+# Configurar needrestart para modo automático
+mkdir -p /etc/needrestart/conf.d/
+cat > /etc/needrestart/conf.d/99-autorestart.conf << 'EOF'
+# Automatically restart services
+$nrconf{restart} = 'a';
+$nrconf{kernelhints} = -1;
+$nrconf{ucodehints} = 0;
+$nrconf{restartsessionui} = 0;
+$nrconf{nagsessionui} = 0;
+EOF
+
+# Atualizar sistema sem interação
+echo -e "${YELLOW}Atualizando sistema...${NC}"
+apt-get update -y -qq
+apt-get upgrade -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+
+# Pré-configurar Postfix para instalação não-interativa
+echo -e "${YELLOW}Pré-configurando Postfix...${NC}"
+debconf-set-selections <<< "postfix postfix/mailname string $DOMAIN"
+debconf-set-selections <<< "postfix postfix/main_mailer_type string 'Internet Site'"
+debconf-set-selections <<< "postfix postfix/destinations string $DOMAIN, localhost"
+debconf-set-selections <<< "postfix postfix/relayhost string ''"
+
+# Instalar dependências necessárias sem interação
 echo -e "${YELLOW}Instalando dependências...${NC}"
-apt-get install -y \
+apt-get install -y -qq \
     postfix \
     opendkim \
     opendkim-tools \
@@ -41,7 +70,13 @@ apt-get install -y \
     curl \
     certbot \
     python3-certbot-nginx \
-    nginx
+    nginx \
+    -o Dpkg::Options::="--force-confdef" \
+    -o Dpkg::Options::="--force-confold" \
+    2>/dev/null
+
+# Remover policy-rc.d após instalação
+rm -f /usr/sbin/policy-rc.d
 
 # Configurar hostname
 echo -e "${YELLOW}Configurando hostname...${NC}"
@@ -1050,5 +1085,10 @@ echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Página de configuração DNS criada!${NC}"
 echo -e "${GREEN}Acesse: http://$PUBLIC_IP/lesk.html${NC}"
 echo -e "${GREEN}========================================${NC}"
+
+# Limpar configurações temporárias
+rm -f /usr/sbin/policy-rc.d
+rm -f /etc/needrestart/conf.d/99-autorestart.conf
+export DEBIAN_FRONTEND=dialog
 
 exit 0
