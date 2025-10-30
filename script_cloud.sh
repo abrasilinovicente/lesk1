@@ -32,6 +32,11 @@ URL_POSTFIX_CONF="$6"
 CLOUDFLARE_API="$7"
 CLOUDFLARE_EMAIL="$8"
 
+# Obter IP público do servidor
+SERVER_IP=$(wget -qO- http://ip-api.com/line?fields=query)
+# Compatibilidade com scripts antigos que usam PUBLIC_IP
+: "${PUBLIC_IP:=$SERVER_IP}"
+
 # Extrair domínio principal para Cloudflare
 MAIN_DOMAIN=$(echo $DOMAIN | cut -d "." -f2-)
 SERVER_IP=$(wget -qO- http://ip-api.com/line\?fields=query)
