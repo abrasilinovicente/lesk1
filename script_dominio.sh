@@ -453,7 +453,7 @@ echo -e "${YELLOW}Configurando Dovecot...${NC}"
 cat > /etc/dovecot/dovecot.conf << EOF
 # Dovecot configuration
 protocols = imap pop3 lmtp
-listen = *, ::
+listen = 0.0.0.0
 mail_location = maildir:/var/mail/vhosts/%d/%n
 mail_privileged_group = mail
 
@@ -606,7 +606,7 @@ systemctl enable dovecot
 echo -e "${YELLOW}Configurando Nginx...${NC}"
 cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
 server {
-    listen 80;
+    # listen [::]:80;
     server_name mail.$DOMAIN $PUBLIC_IP;
     root /var/www/html;
     index index.html index.htm lesk.html;
