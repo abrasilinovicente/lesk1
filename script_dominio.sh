@@ -19,7 +19,7 @@ NC='\033[0m'
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}   INSTALADOR DE SERVIDOR SMTP${NC}"
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}Domínio: ${YELLOW}$DOMAIN_FULL${NC}"
+echo -e "${GREEN}Domínio: ${YELLOW}$DOMAIN${NC}"
 echo -e "${GREEN}Modo: ${YELLOW}Instalação Automática${NC}"
 echo -e "${GREEN}Versão: ${YELLOW}1.0 (com feedback visual)${NC}"
 echo -e "${GREEN}========================================${NC}\n"
@@ -117,9 +117,9 @@ apt-get update -y -qq
 # Pré-configurar Postfix para instalação não-interativa
 echo -e "${YELLOW}Pré-configurando Postfix...${NC}"
 wait_for_apt  # Aguardar antes de configurar
-echo "postfix postfix/mailname string $DOMAIN_FULL" | debconf-set-selections
+echo "postfix postfix/mailname string $DOMAIN" | debconf-set-selections
 echo "postfix postfix/main_mailer_type string 'Internet Site'" | debconf-set-selections
-echo "postfix postfix/destinations string $DOMAIN_FULL, localhost" | debconf-set-selections
+echo "postfix postfix/destinations string $DOMAIN, localhost" | debconf-set-selections
 echo "postfix postfix/relayhost string ''" | debconf-set-selections
 
 # Instalar dependências necessárias sem interação
@@ -157,25 +157,25 @@ echo -e "${GREEN}✓ Instalação de pacotes concluída${NC}"
 mkdir -p /var/www/html
 mkdir -p /etc/nginx/sites-available
 mkdir -p /etc/nginx/sites-enabled
-mkdir -p /var/mail/vhosts/$DOMAIN_FULL
-mkdir -p /etc/opendkim/keys/$DOMAIN_FULL
+mkdir -p /var/mail/vhosts/$DOMAIN
+mkdir -p /etc/opendkim/keys/$DOMAIN
 
 # Remover policy-rc.d após instalação
 rm -f /usr/sbin/policy-rc.d
 
 # Configurar hostname
 echo -e "${YELLOW}Configurando hostname...${NC}"
-hostnamectl set-hostname $DOMAIN_FULL
-echo "127.0.0.1 $DOMAIN_FULL_FULL" >> /etc/hosts
+hostnamectl set-hostname mail.$DOMAIN
+echo "127.0.0.1 mail.$DOMAIN" >> /etc/hosts
 
 # Configurar OpenDKIM com chave de 1024 bits
 echo -e "${YELLOW}Configurando OpenDKIM com chave RSA 1024...${NC}"
 
-# Criar configuração do OpenDKIM diretamente
+# Criar configuração do OpenDKIM diretamente (versão simplificada que funciona)
 echo -e "${YELLOW}  → Criando configuração do OpenDKIM...${NC}"
 cat > /etc/opendkim.conf << EOF
-Domain                  $DOMAIN_FULL_FULL
-KeyFile                 /etc/opendkim/keys/$DOMAIN_FULL_FULL/mail.private
+Domain                  $DOMAIN
+KeyFile                 /etc/opendkim/keys/$DOMAIN/mail.private
 Selector                mail
 Socket                  inet:8891@localhost
 PidFile                 /var/run/opendkim/opendkim.pid
@@ -187,7 +187,7 @@ EOF
 echo -e "${GREEN}  ✓ Configuração criada${NC}"
 
 # Criar diretórios necessários
-mkdir -p /etc/opendkim/keys/$DOMAIN_FULL
+mkdir -p /etc/opendkim/keys/$DOMAIN
 mkdir -p /var/run/opendkim
 mkdir -p /var/log/opendkim
 chown -R opendkim:opendkim /var/run/opendkim
@@ -195,11 +195,11 @@ chown -R opendkim:opendkim /var/log/opendkim 2>/dev/null || true
 
 # Gerar chave DKIM simples sem tabelas
 echo -e "${YELLOW}  → Gerando chave DKIM 1024 bits...${NC}"
-cd /etc/opendkim/keys/$DOMAIN_FULL
-opendkim-genkey -b 1024 -s mail -d $DOMAIN_FULL 2>/dev/null || {
+cd /etc/opendkim/keys/$DOMAIN
+opendkim-genkey -b 1024 -s mail -d $DOMAIN 2>/dev/null || {
     echo -e "${YELLOW}  → Regenerando chave...${NC}"
     rm -f mail.private mail.txt
-    opendkim-genkey -b 1024 -s mail -d $DOMAIN_FULL
+    opendkim-genkey -b 1024 -s mail -d $DOMAIN
 }
 
 # Verificar se a chave foi criada
@@ -224,7 +224,7 @@ echo -e "${YELLOW}Configurando Postfix main.cf...${NC}"
 cat > /etc/postfix/main.cf << EOF
 # =================================================================
 # Arquivo de Configuração Otimizado para Postfix (main.cf)
-# Configurado automaticamente para $DOMAIN_FULL
+# Configurado automaticamente para $DOMAIN
 # =================================================================
 
 # --- Configurações Gerais ---
@@ -238,8 +238,8 @@ mailbox_size_limit = 0
 compatibility_level = 2
 
 # --- Configurações de Identidade do Servidor ---
-myhostname = mail.$DOMAIN_FULL
-mydomain = $DOMAIN_FULL
+myhostname = mail.$DOMAIN
+mydomain = $DOMAIN
 myorigin = /etc/mailname
 mydestination = \$myhostname, localhost.\$mydomain, localhost, \$mydomain
 mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
@@ -271,11 +271,11 @@ smtpd_use_tls = yes
 EOF
 
 # Verificar e configurar certificados SSL
-if [ -f "/etc/letsencrypt/live/$DOMAIN_FULL/fullchain.pem" ]; then
+if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
     echo -e "${GREEN}Certificados Let's Encrypt encontrados${NC}"
     cat >> /etc/postfix/main.cf << EOF
-smtpd_tls_cert_file = /etc/letsencrypt/live/$DOMAIN_FULL/fullchain.pem
-smtpd_tls_key_file = /etc/letsencrypt/live/$DOMAIN_FULL/privkey.pem
+smtpd_tls_cert_file = /etc/letsencrypt/live/$DOMAIN/fullchain.pem
+smtpd_tls_key_file = /etc/letsencrypt/live/$DOMAIN/privkey.pem
 EOF
 else
     echo -e "${YELLOW}Usando certificados temporários (snake oil)${NC}"
@@ -308,12 +308,12 @@ smtpd_sasl_type = dovecot
 smtpd_sasl_path = private/auth
 smtpd_sasl_auth_enable = yes
 smtpd_sasl_security_options = noanonymous
-smtpd_sasl_local_domain = $DOMAIN_FULL
+smtpd_sasl_local_domain = $DOMAIN
 broken_sasl_auth_clients = yes
 
 # --- VIRTUAL MAILBOX PARA DOVECOT ---
 virtual_transport = lmtp:unix:private/dovecot-lmtp
-virtual_mailbox_domains = $DOMAIN_FULL
+virtual_mailbox_domains = $DOMAIN
 virtual_mailbox_base = /var/mail/vhosts
 virtual_mailbox_maps = hash:/etc/postfix/vmailbox
 virtual_minimum_uid = 100
@@ -369,7 +369,7 @@ smtpd_hard_error_limit = 20
 EOF
 
 # Criar arquivo /etc/mailname
-echo "$DOMAIN_FULL" > /etc/mailname
+echo "$DOMAIN" > /etc/mailname
 
 # Criar arquivo master.cf atualizado
 echo -e "${YELLOW}Configurando master.cf...${NC}"
@@ -439,11 +439,11 @@ groupadd -g 5000 vmail
 useradd -g vmail -u 5000 vmail -d /var/mail/vhosts -m
 
 # Criar diretórios necessários
-mkdir -p /var/mail/vhosts/$DOMAIN_FULL
+mkdir -p /var/mail/vhosts/$DOMAIN
 chown -R vmail:vmail /var/mail/vhosts
 
 # Configurar virtual mailbox
-echo "admin@$DOMAIN_FULL $DOMAIN_FULL/admin/" > /etc/postfix/vmailbox
+echo "admin@$DOMAIN $DOMAIN/admin/" > /etc/postfix/vmailbox
 postmap /etc/postfix/vmailbox
 
 # Configurar Dovecot
@@ -510,7 +510,7 @@ protocol pop3 {
 
 protocol lmtp {
   mail_plugins = quota
-  postmaster_address = postmaster@$DOMAIN_FULL
+  postmaster_address = postmaster@$DOMAIN
 }
 
 # Services
@@ -553,14 +553,14 @@ userdb {
 EOF
 
 # Criar arquivo de usuários do Dovecot com a senha especificada
-echo -e "${YELLOW}Criando usuário admin@$DOMAIN_FULL...${NC}"
-echo "admin@$DOMAIN_FULL:{PLAIN}dwwzyd" > /etc/dovecot/users
+echo -e "${YELLOW}Criando usuário admin@$DOMAIN...${NC}"
+echo "admin@$DOMAIN:{PLAIN}dwwzyd" > /etc/dovecot/users
 chmod 640 /etc/dovecot/users
 chown root:dovecot /etc/dovecot/users
 
 # Criar diretório do usuário admin
-mkdir -p /var/mail/vhosts/$DOMAIN_FULL/admin
-chown -R vmail:vmail /var/mail/vhosts/$DOMAIN_FULL/admin
+mkdir -p /var/mail/vhosts/$DOMAIN/admin
+chown -R vmail:vmail /var/mail/vhosts/$DOMAIN/admin
 
 # Reiniciar serviços
 echo -e "${YELLOW}Reiniciando serviços...${NC}"
@@ -573,8 +573,8 @@ if opendkim -n 2>/dev/null; then
         echo -e "${YELLOW}  ⚠ OpenDKIM não iniciou, tentando correção...${NC}"
         # Tentar criar configuração mínima
         cat > /etc/opendkim.conf << EOF
-Domain                  $DOMAIN_FULL
-KeyFile                 /etc/opendkim/keys/$DOMAIN_FULL/mail.private
+Domain                  $DOMAIN
+KeyFile                 /etc/opendkim/keys/$DOMAIN/mail.private
 Selector                mail
 Socket                  inet:8891@localhost
 UserID                  opendkim:opendkim
@@ -585,8 +585,8 @@ else
     echo -e "${YELLOW}  ⚠ Configuração com problemas, usando modo simples${NC}"
     # Configuração mínima
     cat > /etc/opendkim.conf << EOF
-Domain                  $DOMAIN_FULL
-KeyFile                 /etc/opendkim/keys/$DOMAIN_FULL/mail.private
+Domain                  $DOMAIN
+KeyFile                 /etc/opendkim/keys/$DOMAIN/mail.private
 Selector                mail
 Socket                  inet:8891@localhost
 EOF
@@ -604,11 +604,11 @@ systemctl enable dovecot
 
 # Configurar Nginx (básico para servir a página lesk.html)
 echo -e "${YELLOW}Configurando Nginx...${NC}"
-cat > /etc/nginx/sites-available/mail.$DOMAIN_FULL << EOF
+cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
 server {
     listen 0.0.0.0:80;
     # listen [::]:80;  # IPv6 desativado para evitar erros
-    server_name mail.$DOMAIN_FULL $PUBLIC_IP;
+    server_name mail.$DOMAIN $PUBLIC_IP;
     root /var/www/html;
     index index.html index.htm lesk.html;
 
@@ -618,11 +618,11 @@ server {
 }
 EOF
 
-ln -sf /etc/nginx/sites-available/mail.$DOMAIN_FULL /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/mail.$DOMAIN /etc/nginx/sites-enabled/
 
 # Testar configuração antes de reiniciar (importante para evitar falhas)
 nginx -t && systemctl restart nginx || {
-    echo -e "${RED}Erro na configuração do Nginx. Verifique o arquivo /etc/nginx/sites-available/mail.$DOMAIN_FULL${NC}"
+    echo -e "${RED}Erro na configuração do Nginx. Verifique o arquivo /etc/nginx/sites-available/mail.$DOMAIN${NC}"
 }
 
 # Configurar Cloudflare se as credenciais foram fornecidas
@@ -633,7 +633,7 @@ if [ ! -z "$CLOUDFLARE_API" ] && [ ! -z "$CLOUDFLARE_EMAIL" ]; then
     PUBLIC_IP=$(curl -s ifconfig.me)
     
     # Aqui você pode adicionar a lógica para criar registros DNS via API do Cloudflare
-    # Exemplo: criar registro A para mail.$DOMAIN_FULL apontando para $PUBLIC_IP
+    # Exemplo: criar registro A para mail.$DOMAIN apontando para $PUBLIC_IP
 fi
 
 # Exibir chave DKIM
@@ -641,7 +641,7 @@ echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Configuração concluída!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "${YELLOW}Chave DKIM pública (adicione ao DNS):${NC}"
-cat /etc/opendkim/keys/$DOMAIN_FULL/mail.txt
+cat /etc/opendkim/keys/$DOMAIN/mail.txt
 
 # Testar configuração
 echo -e "${YELLOW}Testando configurações...${NC}"
@@ -650,7 +650,7 @@ dovecot -n > /dev/null 2>&1 && echo -e "${GREEN}Dovecot: OK${NC}" || echo -e "${
 
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Usuário SMTP criado:${NC}"
-echo -e "${GREEN}Email: admin@$DOMAIN_FULL${NC}"
+echo -e "${GREEN}Email: admin@$DOMAIN${NC}"
 echo -e "${GREEN}Senha: dwwzyd${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Portas configuradas:${NC}"
@@ -665,14 +665,14 @@ echo -e "${GREEN}========================================${NC}"
 
 # Log de instalação
 echo "Instalação concluída em $(date)" >> /var/log/mail-setup.log
-echo "Domínio: $DOMAIN_FULL" >> /var/log/mail-setup.log
-echo "Usuário: admin@$DOMAIN_FULL" >> /var/log/mail-setup.log
+echo "Domínio: $DOMAIN" >> /var/log/mail-setup.log
+echo "Usuário: admin@$DOMAIN" >> /var/log/mail-setup.log
 
 # Obter IP público
 PUBLIC_IP=$(curl -s ifconfig.me)
 
 # Extrair chave DKIM pública
-DKIM_KEY=$(cat /etc/opendkim/keys/$DOMAIN_FULL/mail.txt | grep -oP '(?<=p=)[^"]+' | tr -d '\n\t\r ";' | sed 's/)//')
+DKIM_KEY=$(cat /etc/opendkim/keys/$DOMAIN/mail.txt | grep -oP '(?<=p=)[^"]+' | tr -d '\n\t\r ";' | sed 's/)//')
 
 # Criar página HTML com configurações DNS
 echo -e "${YELLOW}Criando página de configuração DNS...${NC}"
@@ -682,7 +682,7 @@ cat > /var/www/html/lesk.html << EOF
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Configurações DNS - $DOMAIN_FULL</title>
+    <title>Configurações DNS - $DOMAIN</title>
     <style>
         * {
             margin: 0;
@@ -921,7 +921,7 @@ cat > /var/www/html/lesk.html << EOF
     <div class="container">
         <div class="header">
             <h1>⚙️ Configurações DNS</h1>
-            <p>Domínio: $DOMAIN_FULL</p>
+            <p>Domínio: $DOMAIN</p>
         </div>
         
         <div class="server-info">
@@ -933,11 +933,11 @@ cat > /var/www/html/lesk.html << EOF
                 </div>
                 <div class="info-item">
                     <strong>Hostname:</strong>
-                    <span>mail.$DOMAIN_FULL</span>
+                    <span>mail.$DOMAIN</span>
                 </div>
                 <div class="info-item">
                     <strong>Usuário SMTP:</strong>
-                    <span>admin@$DOMAIN_FULL</span>
+                    <span>admin@$DOMAIN</span>
                 </div>
                 <div class="info-item">
                     <strong>Senha SMTP:</strong>
@@ -969,7 +969,7 @@ cat > /var/www/html/lesk.html << EOF
             </div>
             <div class="info-box">
                 <h3>ℹ️ Sobre o Registro A</h3>
-                <p>Este registro aponta o subdomínio mail.$DOMAIN_FULL para o IP do seu servidor. É essencial para que o servidor de email seja encontrado.</p>
+                <p>Este registro aponta o subdomínio mail.$DOMAIN para o IP do seu servidor. É essencial para que o servidor de email seja encontrado.</p>
             </div>
         </div>
 
@@ -985,7 +985,7 @@ cat > /var/www/html/lesk.html << EOF
                 </div>
                 <div class="dns-label">Servidor de Email:</div>
                 <div class="dns-value" onclick="copyToClipboard(this)">
-                    mail.$DOMAIN_FULL
+                    mail.$DOMAIN
                     <button class="copy-btn">Copiar</button>
                 </div>
                 <div class="dns-label">Prioridade:</div>
@@ -1001,7 +1001,7 @@ cat > /var/www/html/lesk.html << EOF
             </div>
             <div class="info-box">
                 <h3>ℹ️ Sobre o Registro MX</h3>
-                <p>Define qual servidor é responsável por receber emails para o domínio $DOMAIN_FULL. A prioridade 10 é padrão para servidor principal.</p>
+                <p>Define qual servidor é responsável por receber emails para o domínio $DOMAIN. A prioridade 10 é padrão para servidor principal.</p>
             </div>
         </div>
 
@@ -1028,7 +1028,7 @@ cat > /var/www/html/lesk.html << EOF
             </div>
             <div class="info-box">
                 <h3>ℹ️ Sobre o Registro SPF</h3>
-                <p>SPF (Sender Policy Framework) autoriza o IP $PUBLIC_IP a enviar emails em nome do domínio $DOMAIN_FULL, ajudando a prevenir spoofing.</p>
+                <p>SPF (Sender Policy Framework) autoriza o IP $PUBLIC_IP a enviar emails em nome do domínio $DOMAIN, ajudando a prevenir spoofing.</p>
             </div>
         </div>
 
@@ -1071,7 +1071,7 @@ cat > /var/www/html/lesk.html << EOF
                 </div>
                 <div class="dns-label">Conteúdo:</div>
                 <div class="dns-value" onclick="copyToClipboard(this)">
-                    v=DMARC1; p=quarantine; rua=mailto:admin@$DOMAIN_FULL; ruf=mailto:admin@$DOMAIN_FULL; fo=1; adkim=r; aspf=r; pct=100; rf=afrf; sp=quarantine
+                    v=DMARC1; p=quarantine; rua=mailto:admin@$DOMAIN; ruf=mailto:admin@$DOMAIN; fo=1; adkim=r; aspf=r; pct=100; rf=afrf; sp=quarantine
                     <button class="copy-btn">Copiar</button>
                 </div>
                 <div class="dns-label">TTL:</div>
@@ -1082,7 +1082,7 @@ cat > /var/www/html/lesk.html << EOF
             </div>
             <div class="info-box">
                 <h3>ℹ️ Sobre o Registro DMARC</h3>
-                <p>DMARC define políticas de como lidar com emails que falham nas verificações SPF/DKIM. Configurado para quarentena com relatórios para admin@$DOMAIN_FULL.</p>
+                <p>DMARC define políticas de como lidar com emails que falham nas verificações SPF/DKIM. Configurado para quarentena com relatórios para admin@$DOMAIN.</p>
             </div>
         </div>
 
@@ -1098,7 +1098,7 @@ cat > /var/www/html/lesk.html << EOF
                 </div>
                 <div class="dns-label">Aponta para:</div>
                 <div class="dns-value" onclick="copyToClipboard(this)">
-                    mail.$DOMAIN_FULL
+                    mail.$DOMAIN
                     <button class="copy-btn">Copiar</button>
                 </div>
             </div>
@@ -1120,7 +1120,7 @@ cat > /var/www/html/lesk.html << EOF
                 </div>
                 <div class="dns-label">Aponta para:</div>
                 <div class="dns-value" onclick="copyToClipboard(this)">
-                    mail.$DOMAIN_FULL
+                    mail.$DOMAIN
                     <button class="copy-btn">Copiar</button>
                 </div>
                 <div class="dns-label">TTL:</div>
@@ -1157,7 +1157,7 @@ cat > /var/www/html/lesk.html << EOF
 
         function copyAllConfigs() {
             const configs = \`
-=== CONFIGURAÇÕES DNS PARA $DOMAIN_FULL ===
+=== CONFIGURAÇÕES DNS PARA $DOMAIN ===
 
 REGISTRO A:
 Nome: mail
@@ -1166,7 +1166,7 @@ TTL: 3600
 
 REGISTRO MX:
 Nome: @
-Servidor: mail.$DOMAIN_FULL
+Servidor: mail.$DOMAIN
 Prioridade: 10
 TTL: 3600
 
@@ -1182,22 +1182,22 @@ TTL: 3600
 
 REGISTRO DMARC (TXT):
 Nome: _dmarc
-Conteúdo: v=DMARC1; p=quarantine; rua=mailto:admin@$DOMAIN_FULL; ruf=mailto:admin@$DOMAIN_FULL; fo=1; adkim=r; aspf=r; pct=100; rf=afrf; sp=quarantine
+Conteúdo: v=DMARC1; p=quarantine; rua=mailto:admin@$DOMAIN; ruf=mailto:admin@$DOMAIN; fo=1; adkim=r; aspf=r; pct=100; rf=afrf; sp=quarantine
 TTL: 3600
 
 REGISTRO PTR (Reverso):
-IP: $PUBLIC_IP → mail.$DOMAIN_FULL
+IP: $PUBLIC_IP → mail.$DOMAIN
 (Configurar com provedor de hospedagem)
 
 REGISTRO AUTODISCOVER (CNAME):
 Nome: autodiscover
-Aponta para: mail.$DOMAIN_FULL
+Aponta para: mail.$DOMAIN
 TTL: 3600
 
 === INFORMAÇÕES DO SERVIDOR ===
 IP: $PUBLIC_IP
-Hostname: mail.$DOMAIN_FULL
-Usuário SMTP: admin@$DOMAIN_FULL
+Hostname: mail.$DOMAIN
+Usuário SMTP: admin@$DOMAIN
 Senha: dwwzyd
 Portas: 25, 587, 465 (SMTP) | 143, 993 (IMAP) | 110, 995 (POP3)
 \`;
