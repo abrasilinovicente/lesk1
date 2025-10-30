@@ -480,7 +480,11 @@ echo -e "${YELLOW}Criando usuário vmail...${NC}"
 if ! getent group vmail >/dev/null; then
     groupadd -g 5000 vmail
 fi
-useradd -g vmail -u 5000 vmail -d /var/mail/vhosts -m
+if ! id -u vmail >/dev/null 2>&1; then
+    useradd -g vmail -u 5000 vmail -d /var/mail/vhosts -m
+else
+    echo -e "${YELLOW}Usuário vmail já existe, continuando...${NC}"
+fi
 
 # Criar diretórios necessários
 mkdir -p /var/mail/vhosts/$DOMAIN
