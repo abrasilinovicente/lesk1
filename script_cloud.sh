@@ -37,9 +37,10 @@ CLOUDFLARE_EMAIL="$8"
 SERVER_IP=$(wget -qO- http://ip-api.com/line?fields=query 2>/dev/null || echo "127.0.0.1")
 
 # Define PUBLIC_IP se ainda não estiver definido (compatibilidade com scripts antigos)
-: "${PUBLIC_IP:=$SERVER_IP}"
+: "${PUBLIC_IP:=$SERVER_IP}"   # <-- Aqui é que PUBLIC_IP é realmente definida
 
-echo "IP público detectado: $PUBLIC_IP"
+# Agora pode usar com segurança
+echo "IP público detectado: ${PUBLIC_IP}"
 
 # Extrair domínio principal para Cloudflare
 MAIN_DOMAIN=$(echo "$DOMAIN" | cut -d "." -f2-)
