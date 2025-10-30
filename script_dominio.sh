@@ -135,9 +135,25 @@ echo "postfix postfix/main_mailer_type string 'Internet Site'" | debconf-set-sel
 echo "postfix postfix/destinations string $DOMAIN, localhost" | debconf-set-selections
 echo "postfix postfix/relayhost string ''" | debconf-set-selections
 
+#!/bin/bash
+
+# Cores para saída
+YELLOW='\033[1;33m'
+GREEN='\033[1;32m'
+RED='\033[1;31m'
+NC='\033[0m'
+
+# Função fictícia de espera (garante que o apt esteja livre)
+wait_for_apt() {
+    while fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
+        echo -e "${YELLOW}Aguardando outra instalação do apt terminar...${NC}"
+        sleep 2
+    done
+}
+
 # Instalar dependências necessárias sem interação
 echo -e "${YELLOW}Instalando dependências...${NC}"
-wait_for_apt  # Aguardar antes de instalar
+wait_for_apt
 PACKAGES="postfix opendkim opendkim-tools dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd libsasl2-2 libsasl2-modules sasl2-bin mailutils wget unzip curl nginx ssl-cert"
 
 # Contar total de pacotes
@@ -163,6 +179,19 @@ for package in $PACKAGES; do
         echo -e "${GREEN}[$CURRENT_PACKAGE/$TOTAL_PACKAGES] $package já instalado ✓${NC}"
     fi
 done
+
+echo -e "${GREEN}✓ Instalação de pacotes concluída${NC}"
+
+# Comentar a linha listen [::]:80 no nginx
+NGINX_DEFAULT_CONF="/etc/nginx/sites-available/default"
+
+if [ -f "$NGINX_DEFAULT_CONF" ]; then
+    echo -e "${YELLOW}Comentando listen [::]:80 no Nginx...${NC}"
+    sed -i 's/^\s*listen \[::\]:80/# &/' "$NGINX_DEFAULT_CONF"
+    echo -e "${GREEN}✓ Linha listen [::]:80 comentada${NC}"
+else
+    echo -e "${RED}✗ Arquivo de configuração padrão do Nginx não encontrado${NC}"
+fi
 
 echo -e "${GREEN}✓ Instalação de pacotes concluída${NC}"
 
