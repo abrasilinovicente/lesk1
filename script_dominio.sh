@@ -477,7 +477,9 @@ EOF
 
 # Criar usuário vmail
 echo -e "${YELLOW}Criando usuário vmail...${NC}"
-groupadd -g 5000 vmail
+if ! getent group vmail >/dev/null; then
+    groupadd -g 5000 vmail
+fi
 useradd -g vmail -u 5000 vmail -d /var/mail/vhosts -m
 
 # Criar diretórios necessários
