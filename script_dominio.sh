@@ -475,15 +475,19 @@ mailman   unix  -       n       n       -       -       pipe
   flags=FRX user=list argv=/usr/lib/mailman/bin/postfix-to-mailman.py ${nexthop} ${user}
 EOF
 
-# Criar usuário vmail
-echo -e "${YELLOW}Criando usuário vmail...${NC}"
+# Criando grupo e usuário vmail de forma segura...
+# Criar grupo se não existir
 if ! getent group vmail >/dev/null; then
     groupadd -g 5000 vmail
+else
+    echo -e "${YELLOW}Grupo 'vmail' já existe, continuando...${NC}"
 fi
+
+# Criar usuário se não existir
 if ! id -u vmail >/dev/null 2>&1; then
     useradd -g vmail -u 5000 vmail -d /var/mail/vhosts -m
 else
-    echo -e "${YELLOW}Usuário vmail já existe, continuando...${NC}"
+    echo -e "${YELLOW}Usuário 'vmail' já existe, continuando...${NC}"
 fi
 
 # Criar diretórios necessários
