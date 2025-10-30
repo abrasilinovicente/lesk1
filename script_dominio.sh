@@ -606,7 +606,8 @@ systemctl enable dovecot
 echo -e "${YELLOW}Configurando Nginx...${NC}"
 cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
 server {
-    # listen [::]:80;
+    listen 0.0.0.0:80;
+    # listen [::]:80;  # IPv6 desativado para evitar erros
     server_name mail.$DOMAIN $PUBLIC_IP;
     root /var/www/html;
     index index.html index.htm lesk.html;
@@ -618,7 +619,11 @@ server {
 EOF
 
 ln -sf /etc/nginx/sites-available/mail.$DOMAIN /etc/nginx/sites-enabled/
-systemctl restart nginx
+
+# Testar configuração antes de reiniciar (importante para evitar falhas)
+nginx -t && systemctl restart nginx || {
+    echo -e "${RED}Erro na configuração do Nginx. Verifique o arquivo /etc/nginx/sites-available/mail.$DOMAIN${NC}"
+}
 
 # Configurar Cloudflare se as credenciais foram fornecidas
 if [ ! -z "$CLOUDFLARE_API" ] && [ ! -z "$CLOUDFLARE_EMAIL" ]; then
