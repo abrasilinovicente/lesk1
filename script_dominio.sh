@@ -644,6 +644,19 @@ systemctl enable opendkim
 systemctl enable postfix
 systemctl enable dovecot
 
+# ============================================================
+# Obter IP público antes de configurar o Nginx
+# ============================================================
+if [ -z "$PUBLIC_IP" ]; then
+    echo -e "${YELLOW}Detectando IP público...${NC}"
+    PUBLIC_IP=$(curl -s ifconfig.me)
+    if [ -z "$PUBLIC_IP" ]; then
+        echo -e "${RED}Erro: não foi possível detectar o IP público.${NC}"
+        echo -e "${RED}Defina manualmente com:${NC} export PUBLIC_IP=SEU_IP"
+        exit 1
+    fi
+fi
+
 # Configurar Nginx (básico para servir a página lesk.html)
 echo -e "${YELLOW}Configurando Nginx...${NC}"
 cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
@@ -658,6 +671,7 @@ server {
     }
 }
 EOF
+
 
 ln -sf /etc/nginx/sites-available/mail.$DOMAIN /etc/nginx/sites-enabled/
 systemctl restart nginx
