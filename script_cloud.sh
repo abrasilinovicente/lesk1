@@ -3,13 +3,6 @@
 set -Eeuo pipefail
 trap 'echo "[ERRO] linha $LINENO: $BASH_COMMAND (status $?)" >&2' ERR
 
-echo "================================================= Verificação de permissão de root ================================================="
-
-if [ "$(id -u)" -ne 0 ]; then
-  echo "Este script precisa ser executado como root."
-  exit 1
-fi
-
 #================================================================================
 # Script de Configuração Final (v3.0 - Com Cloudflare)
 #================================================================================
