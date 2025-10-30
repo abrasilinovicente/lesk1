@@ -165,17 +165,17 @@ rm -f /usr/sbin/policy-rc.d
 
 # Configurar hostname
 echo -e "${YELLOW}Configurando hostname...${NC}"
-hostnamectl set-hostname $FULL_DOMAIN
-echo "127.0.0.1 $FULL_DOMAIN" >> /etc/hosts
+hostnamectl set-hostname $DOMAIN_FULL
+echo "127.0.0.1 $DOMAIN_FULL" >> /etc/hosts
 
 # Configurar OpenDKIM com chave de 1024 bits
 echo -e "${YELLOW}Configurando OpenDKIM com chave RSA 1024...${NC}"
 
-# Criar configuração do OpenDKIM diretamente (versão simplificada que funciona)
+# Criar configuração do OpenDKIM diretamente
 echo -e "${YELLOW}  → Criando configuração do OpenDKIM...${NC}"
 cat > /etc/opendkim.conf << EOF
-Domain                  $DOMAIN
-KeyFile                 /etc/opendkim/keys/$DOMAIN/mail.private
+Domain                  $DOMAIN_FULL
+KeyFile                 /etc/opendkim/keys/$DOMAIN_FULL/mail.private
 Selector                mail
 Socket                  inet:8891@localhost
 PidFile                 /var/run/opendkim/opendkim.pid
@@ -238,7 +238,7 @@ mailbox_size_limit = 0
 compatibility_level = 2
 
 # --- Configurações de Identidade do Servidor ---
-myhostname = $FULL_DOMAIN
+myhostname = mail.$DOMAIN
 mydomain = $DOMAIN
 myorigin = /etc/mailname
 mydestination = \$myhostname, localhost.\$mydomain, localhost, \$mydomain
@@ -604,11 +604,11 @@ systemctl enable dovecot
 
 # Configurar Nginx (básico para servir a página lesk.html)
 echo -e "${YELLOW}Configurando Nginx...${NC}"
-cat > /etc/nginx/sites-available/$FULL_DOMAIN << EOF
+cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
 server {
     listen 0.0.0.0:80;
-    # listen [::]:80;
-    server_name $FULL_DOMAIN $PUBLIC_IP;
+    # listen [::]:80;  # IPv6 desativado para evitar erros
+    server_name mail.$DOMAIN $PUBLIC_IP;
     root /var/www/html;
     index index.html index.htm lesk.html;
 
@@ -618,11 +618,11 @@ server {
 }
 EOF
 
-ln -sf /etc/nginx/sites-available/$FULL_DOMAIN /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/mail.$DOMAIN /etc/nginx/sites-enabled/
 
 # Testar configuração antes de reiniciar (importante para evitar falhas)
 nginx -t && systemctl restart nginx || {
-    echo -e "${RED}Erro na configuração do Nginx. Verifique o arquivo /etc/nginx/sites-available/$FULL_DOMAIN${NC}"
+    echo -e "${RED}Erro na configuração do Nginx. Verifique o arquivo /etc/nginx/sites-available/mail.$DOMAIN${NC}"
 }
 
 # Configurar Cloudflare se as credenciais foram fornecidas
@@ -633,7 +633,7 @@ if [ ! -z "$CLOUDFLARE_API" ] && [ ! -z "$CLOUDFLARE_EMAIL" ]; then
     PUBLIC_IP=$(curl -s ifconfig.me)
     
     # Aqui você pode adicionar a lógica para criar registros DNS via API do Cloudflare
-    # Exemplo: criar registro A para $FULL_DOMAIN apontando para $PUBLIC_IP
+    # Exemplo: criar registro A para mail.$DOMAIN apontando para $PUBLIC_IP
 fi
 
 # Exibir chave DKIM
@@ -933,7 +933,7 @@ cat > /var/www/html/lesk.html << EOF
                 </div>
                 <div class="info-item">
                     <strong>Hostname:</strong>
-                    <span>$FULL_DOMAIN</span>
+                    <span>mail.$DOMAIN</span>
                 </div>
                 <div class="info-item">
                     <strong>Usuário SMTP:</strong>
@@ -969,7 +969,7 @@ cat > /var/www/html/lesk.html << EOF
             </div>
             <div class="info-box">
                 <h3>ℹ️ Sobre o Registro A</h3>
-                <p>Este registro aponta o subdomínio $FULL_DOMAIN para o IP do seu servidor. É essencial para que o servidor de email seja encontrado.</p>
+                <p>Este registro aponta o subdomínio mail.$DOMAIN para o IP do seu servidor. É essencial para que o servidor de email seja encontrado.</p>
             </div>
         </div>
 
@@ -985,7 +985,7 @@ cat > /var/www/html/lesk.html << EOF
                 </div>
                 <div class="dns-label">Servidor de Email:</div>
                 <div class="dns-value" onclick="copyToClipboard(this)">
-                    $FULL_DOMAIN
+                    mail.$DOMAIN
                     <button class="copy-btn">Copiar</button>
                 </div>
                 <div class="dns-label">Prioridade:</div>
@@ -1098,7 +1098,7 @@ cat > /var/www/html/lesk.html << EOF
                 </div>
                 <div class="dns-label">Aponta para:</div>
                 <div class="dns-value" onclick="copyToClipboard(this)">
-                    $FULL_DOMAIN
+                    mail.$DOMAIN
                     <button class="copy-btn">Copiar</button>
                 </div>
             </div>
@@ -1120,7 +1120,7 @@ cat > /var/www/html/lesk.html << EOF
                 </div>
                 <div class="dns-label">Aponta para:</div>
                 <div class="dns-value" onclick="copyToClipboard(this)">
-                    $FULL_DOMAIN
+                    mail.$DOMAIN
                     <button class="copy-btn">Copiar</button>
                 </div>
                 <div class="dns-label">TTL:</div>
@@ -1166,7 +1166,7 @@ TTL: 3600
 
 REGISTRO MX:
 Nome: @
-Servidor: $FULL_DOMAIN
+Servidor: mail.$DOMAIN
 Prioridade: 10
 TTL: 3600
 
@@ -1186,17 +1186,17 @@ Conteúdo: v=DMARC1; p=quarantine; rua=mailto:admin@$DOMAIN; ruf=mailto:admin@$D
 TTL: 3600
 
 REGISTRO PTR (Reverso):
-IP: $PUBLIC_IP → $FULL_DOMAIN
+IP: $PUBLIC_IP → mail.$DOMAIN
 (Configurar com provedor de hospedagem)
 
 REGISTRO AUTODISCOVER (CNAME):
 Nome: autodiscover
-Aponta para: $FULL_DOMAIN
+Aponta para: mail.$DOMAIN
 TTL: 3600
 
 === INFORMAÇÕES DO SERVIDOR ===
 IP: $PUBLIC_IP
-Hostname: $FULL_DOMAIN
+Hostname: mail.$DOMAIN
 Usuário SMTP: admin@$DOMAIN
 Senha: dwwzyd
 Portas: 25, 587, 465 (SMTP) | 143, 993 (IMAP) | 110, 995 (POP3)
