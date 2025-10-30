@@ -16,10 +16,11 @@ export NEEDRESTART_MODE=a
 export NEEDRESTART_SUSPEND=1
 
 # Receber parâmetros
-DOMAIN=$1
-URL_OPENDKIM_CONF=$2
-CLOUDFLARE_API=$3
-CLOUDFLARE_EMAIL=$4
+DOMAIN=${1:? "Informe o domínio"}
+URL_OPENDKIM_CONF=${2:-}
+CLOUDFLARE_API=${3:-}
+CLOUDFLARE_EMAIL=${4:-}
+
 
 # Cores para output
 RED='\033[0;31m'
