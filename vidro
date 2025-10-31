@@ -1,13 +1,26 @@
 #!/bin/bash
 
+# IP público do servidor
+PUBLIC_IP=$(curl -s ifconfig.me)
+
+# Chave DKIM (se for única para todos os domínios)
+DKIM_KEY="SUA_CHAVE_DKIM_AQUI"
+
 while IFS=';' read -r IP FULLDOMAIN; do
-    # Aqui FULLDOMAIN já tem o subdomínio + domínio
+    # FULLDOMAIN já tem subdomínio + domínio
     HOSTNAME="$FULLDOMAIN"
 
-    echo "Usando IP $IP com $HOSTNAME"
+    # Se quiser separar o domínio do subdomínio
+    DOMAIN="${FULLDOMAIN#*.}"  # remove o primeiro subdomínio
 
-    # Chama seu script original ou comando usando HOSTNAME
+    echo "Usando IP $IP com $HOSTNAME"
+    echo "Domínio principal: $DOMAIN"
+    echo "IP público do servidor: $PUBLIC_IP"
+    echo "Chave DKIM: $DKIM_KEY"
+
+    # Chama seu script original ou comando usando HOSTNAME e IP
     # ./meu_script_original.sh "$HOSTNAME" "$IP"
+
 done < database-config.txt
 
 # Configurar para modo não-interativo
