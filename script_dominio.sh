@@ -643,7 +643,8 @@ if [ -f /etc/nginx/sites-enabled/default ]; then
     rm -f /etc/nginx/sites-enabled/default
 fi
 
-cat > /etc/nginx/sites-enabled/default << EOF
+# Cria o default tanto em sites-available quanto em sites-enabled
+cat > /etc/nginx/sites-available/default << EOF
 server {
 #    listen 80 default_server;
 #    listen [::]:80 default_server;  # IPv6 comentado para funcionar apenas com IPv4
@@ -657,14 +658,16 @@ server {
 }
 EOF
 
-# Testa novamente a configuração completa
+# Cria o link simbólico do default
+ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+
+# Testa e recarrega o Nginx
 if nginx -t; then
     systemctl reload nginx
     echo -e "${GREEN}Site padrão configurado e Nginx recarregado com sucesso!${NC}"
 else
-    echo -e "${RED}Erro na configuração do site padrão. Verifique /etc/nginx/sites-enabled/default.${NC}"
+    echo -e "${RED}Erro na configuração do site padrão. Verifique /etc/nginx/sites-available/default.${NC}"
 fi
-
 
 # Configurar Cloudflare se as credenciais foram fornecidas
 if [ ! -z "$CLOUDFLARE_API" ] && [ ! -z "$CLOUDFLARE_EMAIL" ]; then
