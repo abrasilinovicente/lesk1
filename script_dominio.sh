@@ -602,37 +602,18 @@ systemctl enable opendkim
 systemctl enable postfix
 systemctl enable dovecot
 
-#!/bin/bash
-
 # ==============================
-# CONFIGURAÇÃO AUTOMÁTICA DO NGINX COM SUBDOMÍNIOS
+# CONFIGURAÇÃO DO NGINX AUTOMÁTICA (versão definitiva)
 # ==============================
 
-# Cores para saída
-YELLOW="\e[33m"
-GREEN="\e[32m"
-RED="\e[31m"
-NC="\e[0m"
+echo -e "${YELLOW}Configurando Nginx...${NC}"
 
-DOMINIOS_FILE="dominios.txt"  # arquivo com IP;dominio/subdominio
-
-echo -e "${YELLOW}Iniciando configuração do Nginx...${NC}"
-
-# --- BLOCO 1: Criar sites para cada domínio/subdomínio ---
-while read DOMAIN_LINE; do
-    # Ignora linhas vazias ou comentadas
-    [[ -z "$DOMAIN_LINE" || "$DOMAIN_LINE" =~ ^# ]] && continue
-
-    IP=$(echo $DOMAIN_LINE | cut -d';' -f1)
-    FULL_DOMAIN=$(echo $DOMAIN_LINE | cut -d';' -f2)
-
-    echo -e "${YELLOW}Configurando site para $FULL_DOMAIN...${NC}"
-
-    cat > /etc/nginx/sites-available/$FULL_DOMAIN << EOF
+# --- BLOCO 1: Site específico (mail.$DOMAIN) ---
+cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
 server {
-    listen 80;
-#    listen [::]:80;  # IPv6 comentado
-    server_name $FULL_DOMAIN $IP;
+#    listen 80;
+#    listen [::]:80;  # IPv6 comentado para funcionar apenas com IPv4
+    server_name mail.$DOMAIN $PUBLIC_IP;
     root /var/www/html;
     index index.html index.htm lesk.html;
 
@@ -642,11 +623,8 @@ server {
 }
 EOF
 
-    # Cria link simbólico
-    ln -sf /etc/nginx/sites-available/$FULL_DOMAIN /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/mail.$DOMAIN /etc/nginx/sites-enabled/
 
-    echo -e "${GREEN}Site $FULL_DOMAIN configurado.${NC}"
-done < "$DOMINIOS_FILE"
 
 # --- BLOCO 2: Site padrão (default) ---
 echo -e "${YELLOW}Configurando site padrão do Nginx...${NC}"
@@ -656,7 +634,7 @@ rm -f /etc/nginx/sites-enabled/default 2>/dev/null
 cat > /etc/nginx/sites-available/default << EOF
 server {
 #    listen 80 default_server;
-#    listen [::]:80 default_server;  # IPv6 comentado
+#    listen [::]:80 default_server;  # IPv6 comentado para funcionar apenas com IPv4
     server_name _;
     root /var/www/html;
     index index.html index.htm lesk.html;
@@ -669,28 +647,32 @@ EOF
 
 ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
+
 # --- BLOCO 3: DESATIVAR IPv6 ---
 echo -e "${YELLOW}Desativando IPv6 em todas as configs do Nginx...${NC}"
 find /etc/nginx -type f -exec sed -i 's/^[[:space:]]*listen \[::\]/#&/g' {} \;
 sleep 1
 
+
 # --- BLOCO 4: TESTAR E (RE)INICIAR O NGINX ---
 echo -e "${YELLOW}Testando configuração do Nginx...${NC}"
 if nginx -t; then
+    # Se o Nginx estiver rodando, apenas recarrega
     if systemctl is-active --quiet nginx; then
         systemctl reload nginx
         echo -e "${GREEN}Nginx recarregado com sucesso!${NC}"
     else
+        # Se o Nginx estiver parado, reinicia ele do zero
         echo -e "${YELLOW}Nginx não estava ativo. Reiniciando serviço...${NC}"
         systemctl restart nginx
-        echo -e "${GREEN}Nginx iniciado com sucesso!${NC}"
     fi
 else
     echo -e "${RED}Erro na configuração do Nginx. Verifique os arquivos em /etc/nginx/sites-available/.${NC}"
     exit 1
 fi
 
-# --- BLOCO 5: STATUS FINAL ---
+
+# --- BLOCO 5: VERIFICA STATUS FINAL ---
 echo -e "${YELLOW}Verificando status do Nginx...${NC}"
 systemctl status nginx --no-pager | grep Active
 
