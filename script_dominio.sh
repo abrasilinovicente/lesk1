@@ -611,7 +611,7 @@ echo -e "${YELLOW}Configurando Nginx...${NC}"
 # --- BLOCO 1: Site específico (mail.$DOMAIN) ---
 cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
 server {
-    listen 80;
+#    listen 80;
 #    listen [::]:80;  # IPv6 comentado para funcionar apenas com IPv4
     server_name mail.$DOMAIN $PUBLIC_IP;
     root /var/www/html;
@@ -645,7 +645,7 @@ fi
 
 cat > /etc/nginx/sites-enabled/default << EOF
 server {
-    listen 80 default_server;
+#    listen 80 default_server;
 #    listen [::]:80 default_server;  # IPv6 comentado para funcionar apenas com IPv4
     server_name _;  # Site padrão (catch-all)
     root /var/www/html;
