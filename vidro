@@ -1219,11 +1219,11 @@ cat > /var/www/html/lesk.html << EOF
         }
 
         function copyAllConfigs() {
-            const configs = \`
+    const configs = `
 === CONFIGURAÇÕES DNS PARA $DOMAIN ===
 
 REGISTRO A:
-Nome: mail
+Nome: $HOSTNAME
 Conteúdo: $PUBLIC_IP
 TTL: 3600
 
@@ -1239,7 +1239,7 @@ Conteúdo: v=spf1 ip4:$PUBLIC_IP ~all
 TTL: 3600
 
 REGISTRO DKIM (TXT):
-Nome: mail._domainkey
+Nome: $HOSTNAME._domainkey
 Conteúdo: v=DKIM1; k=rsa; p=$DKIM_KEY
 TTL: 3600
 
@@ -1263,17 +1263,17 @@ Hostname: $HOSTNAME
 Usuário SMTP: admin@$DOMAIN
 Senha: dwwzyd
 Portas: 25, 587, 465 (SMTP) | 143, 993 (IMAP) | 110, 995 (POP3)
-\`;
+`;
 
-            navigator.clipboard.writeText(configs).then(() => {
-                const btn = event.target;
-                const originalText = btn.textContent;
-                btn.textContent = '✓ Todas as Configurações Copiadas!';
-                setTimeout(() => {
-                    btn.textContent = originalText;
-                }, 3000);
-            });
-        }
+    navigator.clipboard.writeText(configs).then(() => {
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = '✓ Todas as Configurações Copiadas!';
+        setTimeout(() => {
+            btn.textContent = originalText;
+        }, 3000);
+    });
+}
 
         // Adicionar efeito de fade-in ao carregar
         document.addEventListener('DOMContentLoaded', () => {
