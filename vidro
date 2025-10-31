@@ -1,28 +1,3 @@
-#!/bin/bash
-
-# IP público do servidor
-PUBLIC_IP=$(curl -s ifconfig.me)
-
-# Chave DKIM (se for única para todos os domínios)
-DKIM_KEY="SUA_CHAVE_DKIM_AQUI"
-
-while IFS=';' read -r IP FULLDOMAIN; do
-    # FULLDOMAIN já tem subdomínio + domínio
-    HOSTNAME="$FULLDOMAIN"
-
-    # Se quiser separar o domínio do subdomínio
-    DOMAIN="${FULLDOMAIN#*.}"  # remove o primeiro subdomínio
-
-    echo "Usando IP $IP com $HOSTNAME"
-    echo "Domínio principal: $DOMAIN"
-    echo "IP público do servidor: $PUBLIC_IP"
-    echo "Chave DKIM: $DKIM_KEY"
-
-    # Chama seu script original ou comando usando HOSTNAME e IP
-    # ./meu_script_original.sh "$HOSTNAME" "$IP"
-
-done < database-config.txt
-
 # Configurar para modo não-interativo
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
@@ -190,8 +165,8 @@ rm -f /usr/sbin/policy-rc.d
 
 # Configurar hostname
 echo -e "${YELLOW}Configurando hostname...${NC}"
-hostnamectl set-hostname $HOSTNAME
-echo "127.0.0.1 $HOSTNAME" >> /etc/hosts
+hostnamectl set-hostname mail.$DOMAIN
+echo "127.0.0.1 mail.$DOMAIN" >> /etc/hosts
 
 # Configurar OpenDKIM com chave de 1024 bits
 echo -e "${YELLOW}Configurando OpenDKIM com chave RSA 1024...${NC}"
@@ -263,7 +238,7 @@ mailbox_size_limit = 0
 compatibility_level = 2
 
 # --- Configurações de Identidade do Servidor ---
-myhostname = $HOSTNAME
+myhostname = mail.$DOMAIN
 mydomain = $DOMAIN
 myorigin = /etc/mailname
 mydestination = \$myhostname, localhost.\$mydomain, localhost, \$mydomain
@@ -633,12 +608,12 @@ systemctl enable dovecot
 
 echo -e "${YELLOW}Configurando Nginx...${NC}"
 
-# --- BLOCO 1: Site específico ($HOSTNAME) ---
-cat > /etc/nginx/sites-available/$HOSTNAME << EOF
+# --- BLOCO 1: Site específico (mail.$DOMAIN) ---
+cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
 server {
 #    listen 80;
 #    listen [::]:80;  # IPv6 comentado para funcionar apenas com IPv4
-    server_name $HOSTNAME $PUBLIC_IP;
+    server_name mail.$DOMAIN $PUBLIC_IP;
     root /var/www/html;
     index index.html index.htm lesk.html;
 
@@ -648,7 +623,7 @@ server {
 }
 EOF
 
-ln -sf /etc/nginx/sites-available/$HOSTNAME /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/mail.$DOMAIN /etc/nginx/sites-enabled/
 
 
 # --- BLOCO 2: Site padrão (default) ---
@@ -709,7 +684,7 @@ if [ ! -z "$CLOUDFLARE_API" ] && [ ! -z "$CLOUDFLARE_EMAIL" ]; then
     PUBLIC_IP=$(curl -s ifconfig.me)
     
     # Aqui você pode adicionar a lógica para criar registros DNS via API do Cloudflare
-    # Exemplo: criar registro A para $HOSTNAME apontando para $PUBLIC_IP
+    # Exemplo: criar registro A para mail.$DOMAIN apontando para $PUBLIC_IP
 fi
 
 # Exibir chave DKIM
@@ -750,8 +725,8 @@ PUBLIC_IP=$(curl -s ifconfig.me)
 # Extrair chave DKIM pública
 DKIM_KEY=$(cat /etc/opendkim/keys/$DOMAIN/mail.txt | grep -oP '(?<=p=)[^"]+' | tr -d '\n\t\r ";' | sed 's/)//')
 
+# Criar página HTML com configurações DNS
 echo -e "${YELLOW}Criando página de configuração DNS...${NC}"
-
 cat > /var/www/html/lesk.html << EOF
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -760,39 +735,237 @@ cat > /var/www/html/lesk.html << EOF
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Configurações DNS - $DOMAIN</title>
     <style>
-        * { margin:0; padding:0; box-sizing:border-box; }
-        body { font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height:100vh; padding:20px; }
-        .container { max-width:1200px; margin:0 auto; }
-        .header { text-align:center; color:white; margin-bottom:30px; }
-        .header h1 { font-size:2.5rem; margin-bottom:10px; text-shadow:2px 2px 4px rgba(0,0,0,0.2); }
-        .header p { font-size:1.2rem; opacity:0.95; }
-        .dns-card { background:white; border-radius:15px; padding:25px; margin-bottom:20px; box-shadow:0 10px 30px rgba(0,0,0,0.2); transition: transform 0.3s; }
-        .dns-card:hover { transform:translateY(-5px); box-shadow:0 15px 40px rgba(0,0,0,0.25); }
-        .dns-type { display:inline-block; background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); color:white; padding:5px 15px; border-radius:20px; font-weight:bold; margin-bottom:15px; font-size:0.9rem; }
-        .dns-info { display:grid; grid-template-columns:120px 1fr; gap:15px; margin-bottom:15px; }
-        .dns-label { font-weight:600; color:#555; padding:8px 0; }
-        .dns-value { background:#f5f5f5; padding:8px 15px; border-radius:8px; font-family:'Courier New', monospace; font-size:14px; word-break:break-all; position:relative; cursor:pointer; transition: background 0.3s; }
-        .dns-value:hover { background:#e8e8e8; }
-        .copy-btn { position:absolute; right:10px; top:50%; transform:translateY(-50%); background:#667eea; color:white; border:none; padding:5px 12px; border-radius:5px; cursor:pointer; font-size:12px; transition: all 0.3s; opacity:0; }
-        .dns-value:hover .copy-btn { opacity:1; }
-        .copy-btn:hover { background:#764ba2; transform:translateY(-50%) scale(1.05); }
-        .copy-btn.copied { background:#4caf50; }
-        .status-badge { display:inline-block; padding:3px 10px; border-radius:12px; font-size:12px; margin-left:10px; }
-        .status-required { background:#ff4444; color:white; }
-        .status-recommended { background:#ff9800; color:white; }
-        .status-optional { background:#4caf50; color:white; }
-        .info-box { background:#f0f7ff; border-left:4px solid #2196F3; padding:15px; margin-top:20px; border-radius:5px; }
-        .info-box h3 { color:#1976D2; margin-bottom:10px; font-size:1.1rem; }
-        .info-box p { color:#555; line-height:1.6; }
-        .server-info { background:white; border-radius:15px; padding:25px; margin-bottom:30px; box-shadow:0 10px 30px rgba(0,0,0,0.2); }
-        .server-info h2 { color:#333; margin-bottom:20px; display:flex; align-items:center; }
-        .server-info h2::before { content:"🖥️"; margin-right:10px; }
-        .info-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); gap:20px; }
-        .info-item { padding:15px; background:#f9f9f9; border-radius:10px; }
-        .info-item strong { color:#667eea; display:block; margin-bottom:5px; }
-        .copy-all-btn { background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); color:white; border:none; padding:12px 30px; border-radius:25px; cursor:pointer; font-size:16px; font-weight:bold; margin:20px auto; display:block; transition: all 0.3s; }
-        .copy-all-btn:hover { transform:scale(1.05); box-shadow:0 5px 20px rgba(102, 126, 234, 0.4); }
-        @media (max-width:768px) { .dns-info { grid-template-columns:1fr; } .dns-label { font-size:12px; padding:5px 0; } .header h1 { font-size:1.8rem; } }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .header p {
+            font-size: 1.2rem;
+            opacity: 0.95;
+        }
+        
+        .dns-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s;
+        }
+        
+        .dns-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.25);
+        }
+        
+        .dns-type {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+        }
+        
+        .dns-info {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .dns-label {
+            font-weight: 600;
+            color: #555;
+            padding: 8px 0;
+        }
+        
+        .dns-value {
+            background: #f5f5f5;
+            padding: 8px 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            word-break: break-all;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        .dns-value:hover {
+            background: #e8e8e8;
+        }
+        
+        .copy-btn {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 5px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+            opacity: 0;
+        }
+        
+        .dns-value:hover .copy-btn {
+            opacity: 1;
+        }
+        
+        .copy-btn:hover {
+            background: #764ba2;
+            transform: translateY(-50%) scale(1.05);
+        }
+        
+        .copy-btn.copied {
+            background: #4caf50;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        
+        .status-required {
+            background: #ff4444;
+            color: white;
+        }
+        
+        .status-recommended {
+            background: #ff9800;
+            color: white;
+        }
+        
+        .status-optional {
+            background: #4caf50;
+            color: white;
+        }
+        
+        .info-box {
+            background: #f0f7ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 5px;
+        }
+        
+        .info-box h3 {
+            color: #1976D2;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+        }
+        
+        .info-box p {
+            color: #555;
+            line-height: 1.6;
+        }
+        
+        .server-info {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .server-info h2 {
+            color: #333;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .server-info h2::before {
+            content: "🖥️";
+            margin-right: 10px;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        
+        .info-item {
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 10px;
+        }
+        
+        .info-item strong {
+            color: #667eea;
+            display: block;
+            margin-bottom: 5px;
+        }
+        
+        .copy-all-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            margin: 20px auto;
+            display: block;
+            transition: all 0.3s;
+        }
+        
+        .copy-all-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        @media (max-width: 768px) {
+            .dns-info {
+                grid-template-columns: 1fr;
+            }
+            
+            .dns-label {
+                font-size: 12px;
+                padding: 5px 0;
+            }
+            
+            .header h1 {
+                font-size: 1.8rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -806,51 +979,230 @@ cat > /var/www/html/lesk.html << EOF
             <h2>Informações do Servidor</h2>
             <div class="info-grid">
                 <div class="info-item">
-                    <strong>IP do Servidor:</strong><span>$PUBLIC_IP</span>
+                    <strong>IP do Servidor:</strong>
+                    <span>$PUBLIC_IP</span>
                 </div>
                 <div class="info-item">
-                    <strong>Hostname:</strong><span>$HOSTNAME</span>
+                    <strong>Hostname:</strong>
+                    <span>mail.$DOMAIN</span>
                 </div>
                 <div class="info-item">
-                    <strong>Usuário SMTP:</strong><span>admin@$DOMAIN</span>
+                    <strong>Usuário SMTP:</strong>
+                    <span>admin@$DOMAIN</span>
                 </div>
                 <div class="info-item">
-                    <strong>Senha SMTP:</strong><span>dwwzyd</span>
+                    <strong>Senha SMTP:</strong>
+                    <span>dwwzyd</span>
                 </div>
             </div>
         </div>
 
-        <!-- Aqui entram os blocos de DNS: A, MX, SPF, DKIM, DMARC, PTR, Autodiscover -->
-        <!-- Exemplo do Registro A -->
+        <!-- Registro A -->
         <div class="dns-card">
             <span class="dns-type">TIPO A</span>
             <span class="status-badge status-required">Obrigatório</span>
             <div class="dns-info">
                 <div class="dns-label">Nome:</div>
-                <div class="dns-value" onclick="copyToClipboard(this)">mail<button class="copy-btn">Copiar</button></div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    mail
+                    <button class="copy-btn">Copiar</button>
+                </div>
                 <div class="dns-label">Conteúdo:</div>
-                <div class="dns-value" onclick="copyToClipboard(this)">$PUBLIC_IP<button class="copy-btn">Copiar</button></div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    $PUBLIC_IP
+                    <button class="copy-btn">Copiar</button>
+                </div>
                 <div class="dns-label">TTL:</div>
-                <div class="dns-value" onclick="copyToClipboard(this)">3600<button class="copy-btn">Copiar</button></div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
             </div>
             <div class="info-box">
                 <h3>ℹ️ Sobre o Registro A</h3>
-                <p>Este registro aponta o subdomínio $HOSTNAME para o IP do seu servidor. É essencial para que o servidor de email seja encontrado.</p>
+                <p>Este registro aponta o subdomínio mail.$DOMAIN para o IP do seu servidor. É essencial para que o servidor de email seja encontrado.</p>
             </div>
         </div>
 
-        <!-- Demais registros (MX, SPF, DKIM, DMARC, PTR, Autodiscover) seguem o mesmo padrão, com $DOMAIN, $PUBLIC_IP e $DKIM_KEY -->
+        <!-- Registro MX -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO MX</span>
+            <span class="status-badge status-required">Obrigatório</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    @
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Servidor de Email:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    mail.$DOMAIN
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Prioridade:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    10
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o Registro MX</h3>
+                <p>Define qual servidor é responsável por receber emails para o domínio $DOMAIN. A prioridade 10 é padrão para servidor principal.</p>
+            </div>
+        </div>
+
+        <!-- Registro SPF -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO TXT (SPF)</span>
+            <span class="status-badge status-required">Obrigatório</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    @
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Conteúdo:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    v=spf1 ip4:$PUBLIC_IP ~all
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o Registro SPF</h3>
+                <p>SPF (Sender Policy Framework) autoriza o IP $PUBLIC_IP a enviar emails em nome do domínio $DOMAIN, ajudando a prevenir spoofing.</p>
+            </div>
+        </div>
+
+        <!-- Registro DKIM -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO TXT (DKIM)</span>
+            <span class="status-badge status-recommended">Recomendado</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    mail._domainkey
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Conteúdo:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    v=DKIM1; k=rsa; p=$DKIM_KEY
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o Registro DKIM</h3>
+                <p>DKIM adiciona uma assinatura digital aos emails enviados, provando que são autênticos e não foram modificados. Chave RSA de 1024 bits.</p>
+            </div>
+        </div>
+
+        <!-- Registro DMARC -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO TXT (DMARC)</span>
+            <span class="status-badge status-recommended">Recomendado</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    _dmarc
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Conteúdo:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    v=DMARC1; p=quarantine; rua=mailto:admin@$DOMAIN; ruf=mailto:admin@$DOMAIN; fo=1; adkim=r; aspf=r; pct=100; rf=afrf; sp=quarantine
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o Registro DMARC</h3>
+                <p>DMARC define políticas de como lidar com emails que falham nas verificações SPF/DKIM. Configurado para quarentena com relatórios para admin@$DOMAIN.</p>
+            </div>
+        </div>
+
+        <!-- Registro PTR (Reverso) -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO PTR (Reverso)</span>
+            <span class="status-badge status-optional">Opcional</span>
+            <div class="dns-info">
+                <div class="dns-label">IP Reverso:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    $PUBLIC_IP
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Aponta para:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    mail.$DOMAIN
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o Registro PTR</h3>
+                <p>O registro PTR (DNS reverso) deve ser configurado com seu provedor de hospedagem/ISP. Melhora a reputação do servidor de email.</p>
+            </div>
+        </div>
+
+        <!-- Registro Autodiscover -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO CNAME (Autodiscover)</span>
+            <span class="status-badge status-optional">Opcional</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    autodiscover
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Aponta para:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    mail.$DOMAIN
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o Autodiscover</h3>
+                <p>Permite que clientes de email (Outlook, Thunderbird) configurem automaticamente as configurações do servidor.</p>
+            </div>
+        </div>
 
         <button class="copy-all-btn" onclick="copyAllConfigs()">📋 Copiar Todas as Configurações</button>
     </div>
 
     <script>
         function copyToClipboard(element) {
-            const text = element.textContent.replace('Copiar','').trim();
+            const text = element.textContent.replace('Copiar', '').trim();
             navigator.clipboard.writeText(text).then(() => {
                 const btn = element.querySelector('.copy-btn');
-                if(btn){ const originalText = btn.textContent; btn.textContent='✓ Copiado!'; btn.classList.add('copied');
-                setTimeout(()=>{btn.textContent=originalText; btn.classList.remove('copied');},2000);}
+                if (btn) {
+                    const originalText = btn.textContent;
+                    btn.textContent = '✓ Copiado!';
+                    btn.classList.add('copied');
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                        btn.classList.remove('copied');
+                    }, 2000);
+                }
             });
         }
 
@@ -859,32 +1211,111 @@ cat > /var/www/html/lesk.html << EOF
 === CONFIGURAÇÕES DNS PARA $DOMAIN ===
 
 REGISTRO A:
-Nome: $HOSTNAME
+Nome: mail
 Conteúdo: $PUBLIC_IP
 TTL: 3600
 
-DKIM:
-Chave: $DKIM_KEY
+REGISTRO MX:
+Nome: @
+Servidor: mail.$DOMAIN
+Prioridade: 10
+TTL: 3600
+
+REGISTRO SPF (TXT):
+Nome: @
+Conteúdo: v=spf1 ip4:$PUBLIC_IP ~all
+TTL: 3600
+
+REGISTRO DKIM (TXT):
+Nome: mail._domainkey
+Conteúdo: v=DKIM1; k=rsa; p=$DKIM_KEY
+TTL: 3600
+
+REGISTRO DMARC (TXT):
+Nome: _dmarc
+Conteúdo: v=DMARC1; p=quarantine; rua=mailto:admin@$DOMAIN; ruf=mailto:admin@$DOMAIN; fo=1; adkim=r; aspf=r; pct=100; rf=afrf; sp=quarantine
+TTL: 3600
+
+REGISTRO PTR (Reverso):
+IP: $PUBLIC_IP → mail.$DOMAIN
+(Configurar com provedor de hospedagem)
+
+REGISTRO AUTODISCOVER (CNAME):
+Nome: autodiscover
+Aponta para: mail.$DOMAIN
+TTL: 3600
+
+=== INFORMAÇÕES DO SERVIDOR ===
+IP: $PUBLIC_IP
+Hostname: mail.$DOMAIN
+Usuário SMTP: admin@$DOMAIN
+Senha: dwwzyd
+Portas: 25, 587, 465 (SMTP) | 143, 993 (IMAP) | 110, 995 (POP3)
 \`;
-            navigator.clipboard.writeText(configs).then(()=>alert('Todas as configurações foram copiadas!'));
+
+            navigator.clipboard.writeText(configs).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✓ Todas as Configurações Copiadas!';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 3000);
+            });
         }
+
+        // Adicionar efeito de fade-in ao carregar
+        document.addEventListener('DOMContentLoaded', () => {
+            const cards = document.querySelectorAll('.dns-card, .server-info');
+            cards.forEach((card, index) => {
+                card.style.opacity = '0';
+                card.style.transform = 'translateY(20px)';
+                setTimeout(() => {
+                    card.style.transition = 'opacity 0.5s, transform 0.5s';
+                    card.style.opacity = '1';
+                    card.style.transform = 'translateY(0)';
+                }, index * 100);
+            });
+        });
     </script>
 </body>
 </html>
 EOF
 
-echo -e "${GREEN}Página HTML criada em /var/www/html/lesk.html${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Página de configuração DNS criada!${NC}"
+echo -e "${GREEN}Acesse: http://$PUBLIC_IP/lesk.html${NC}"
+echo -e "${GREEN}========================================${NC}"
 
-# Verificação de serviços
+# Verificar status dos serviços
+echo -e "\n${YELLOW}📊 Verificando status dos serviços...${NC}"
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
 SERVICES=("postfix" "dovecot" "opendkim" "nginx")
+ALL_OK=true
 
-echo -e "${YELLOW}Verificando status dos serviços...${NC}"
 for service in "${SERVICES[@]}"; do
     if systemctl is-active --quiet $service; then
-        echo -e "${GREEN}$service está ativo${NC}"
+        echo -e "  $service: ${GREEN}● Ativo${NC}"
     else
-        echo -e "${RED}$service não está ativo${NC}"
+        echo -e "  $service: ${RED}● Inativo${NC}"
+        ALL_OK=false
     fi
 done
 
-echo -e "${GREEN}Script concluído com sucesso!${NC}"
+if $ALL_OK; then
+    echo -e "\n${GREEN}✅ TODOS OS SERVIÇOS ESTÃO FUNCIONANDO!${NC}"
+else
+    echo -e "\n${YELLOW}⚠ Alguns serviços não estão ativos. Verifique os logs.${NC}"
+fi
+
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+# Limpar configurações temporárias
+rm -f /usr/sbin/policy-rc.d
+rm -f /etc/needrestart/conf.d/99-autorestart.conf
+export DEBIAN_FRONTEND=dialog
+
+echo -e "\n${GREEN}🎉 Instalação concluída com sucesso!${NC}"
+echo -e "${GREEN}📧 Acesse http://$PUBLIC_IP/lesk.html para ver as configurações DNS${NC}\n"
+
+exit 0
