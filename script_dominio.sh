@@ -602,13 +602,17 @@ systemctl enable opendkim
 systemctl enable postfix
 systemctl enable dovecot
 
-# Configurar Nginx (básico para servir a página lesk.html)
+# ==============================
+# CONFIGURAÇÃO DO NGINX AUTOMÁTICA
+# ==============================
+
 echo -e "${YELLOW}Configurando Nginx...${NC}"
 
+# --- BLOCO 1: Site específico (mail.$DOMAIN) ---
 cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
 server {
-#    listen 80 default_server;
-#    listen [::]:80 default_server;  # IPv6 comentado para funcionar apenas com IPv4
+    listen 80;
+#    listen [::]:80;  # IPv6 comentado para funcionar apenas com IPv4
     server_name mail.$DOMAIN $PUBLIC_IP;
     root /var/www/html;
     index index.html index.htm lesk.html;
@@ -619,17 +623,48 @@ server {
 }
 EOF
 
-# Cria o link simbólico em sites-enabled
+# Cria link simbólico para ativar o site
 ln -sf /etc/nginx/sites-available/mail.$DOMAIN /etc/nginx/sites-enabled/
 
 # Testa a configuração antes de recarregar
-nginx -t && systemctl reload nginx
+if nginx -t; then
+    systemctl reload nginx
+    echo -e "${GREEN}Site mail.$DOMAIN configurado e Nginx recarregado.${NC}"
+else
+    echo -e "${RED}Erro na configuração de mail.$DOMAIN. Verifique o arquivo.${NC}"
+fi
 
 
-# Testar configuração antes de reiniciar (importante para evitar falhas)
-nginx -t && systemctl restart nginx || {
-    echo -e "${RED}Erro na configuração do Nginx. Verifique o arquivo /etc/nginx/sites-available/mail.$DOMAIN${NC}"
+# --- BLOCO 2: Site padrão (default) ---
+echo -e "${YELLOW}Configurando site padrão do Nginx...${NC}"
+
+# Remove o default antigo (para evitar conflitos)
+if [ -f /etc/nginx/sites-enabled/default ]; then
+    rm -f /etc/nginx/sites-enabled/default
+fi
+
+cat > /etc/nginx/sites-enabled/default << EOF
+server {
+    listen 80 default_server;
+#    listen [::]:80 default_server;  # IPv6 comentado para funcionar apenas com IPv4
+    server_name _;  # Site padrão (catch-all)
+    root /var/www/html;
+    index index.html index.htm lesk.html;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
 }
+EOF
+
+# Testa novamente a configuração completa
+if nginx -t; then
+    systemctl reload nginx
+    echo -e "${GREEN}Site padrão configurado e Nginx recarregado com sucesso!${NC}"
+else
+    echo -e "${RED}Erro na configuração do site padrão. Verifique /etc/nginx/sites-enabled/default.${NC}"
+fi
+
 
 # Configurar Cloudflare se as credenciais foram fornecidas
 if [ ! -z "$CLOUDFLARE_API" ] && [ ! -z "$CLOUDFLARE_EMAIL" ]; then
