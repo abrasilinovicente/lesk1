@@ -626,7 +626,7 @@ EOF
 # Cria link simbólico para ativar o site
 ln -sf /etc/nginx/sites-available/mail.$DOMAIN /etc/nginx/sites-enabled/
 
-# --- DESATIVAR IPv6 AUTOMATICAMENTE ---
+# --- DESATIVAR IPv6 AUTOMATICAMENTE (ANTES DE TESTAR) ---
 echo -e "${YELLOW}Desativando IPv6 em todas as configs do Nginx...${NC}"
 find /etc/nginx -type f -exec sed -i 's/^[[:space:]]*listen \[::\]/#&/g' {} \;
 
@@ -665,7 +665,7 @@ EOF
 # Cria o link simbólico do default
 ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
-# --- DESATIVAR IPv6 AUTOMATICAMENTE (de novo, após criar o default) ---
+# --- DESATIVAR IPv6 AUTOMATICAMENTE (DEPOIS DE CRIAR O DEFAULT) ---
 echo -e "${YELLOW}Verificando novamente o IPv6 após criar o default...${NC}"
 find /etc/nginx -type f -exec sed -i 's/^[[:space:]]*listen \[::\]/#&/g' {} \;
 
