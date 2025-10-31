@@ -626,18 +626,6 @@ EOF
 # Cria link simbólico para ativar o site
 ln -sf /etc/nginx/sites-available/mail.$DOMAIN /etc/nginx/sites-enabled/
 
-# --- DESATIVAR IPv6 AUTOMATICAMENTE (ANTES DE TESTAR) ---
-echo -e "${YELLOW}Desativando IPv6 em todas as configs do Nginx...${NC}"
-find /etc/nginx -type f -exec sed -i 's/^[[:space:]]*listen \[::\]/#&/g' {} \;
-
-# Testa a configuração antes de recarregar
-if nginx -t; then
-    systemctl reload nginx
-    echo -e "${GREEN}Site mail.$DOMAIN configurado e Nginx recarregado.${NC}"
-else
-    echo -e "${RED}Erro na configuração de mail.$DOMAIN. Verifique o arquivo.${NC}"
-fi
-
 
 # --- BLOCO 2: Site padrão (default) ---
 echo -e "${YELLOW}Configurando site padrão do Nginx...${NC}"
@@ -665,16 +653,21 @@ EOF
 # Cria o link simbólico do default
 ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
-# --- DESATIVAR IPv6 AUTOMATICAMENTE (DEPOIS DE CRIAR O DEFAULT) ---
-echo -e "${YELLOW}Verificando novamente o IPv6 após criar o default...${NC}"
+
+# --- DESATIVAR IPv6 AUTOMATICAMENTE (ANTES DE QUALQUER TESTE) ---
+echo -e "${YELLOW}Desativando IPv6 em todas as configs do Nginx...${NC}"
 find /etc/nginx -type f -exec sed -i 's/^[[:space:]]*listen \[::\]/#&/g' {} \;
 
-# Testa e recarrega o Nginx
+sleep 1  # pequena pausa para garantir que o disco sincronize as alterações
+
+
+# --- TESTES E RELOAD ---
+echo -e "${YELLOW}Testando configuração do Nginx...${NC}"
 if nginx -t; then
     systemctl reload nginx
-    echo -e "${GREEN}Site padrão configurado e Nginx recarregado com sucesso!${NC}"
+    echo -e "${GREEN}Nginx configurado e recarregado com sucesso!${NC}"
 else
-    echo -e "${RED}Erro na configuração do site padrão. Verifique /etc/nginx/sites-available/default.${NC}"
+    echo -e "${RED}Erro na configuração do Nginx. Verifique os arquivos em /etc/nginx/sites-available/.${NC}"
 fi
 
 # Configurar Cloudflare se as credenciais foram fornecidas
