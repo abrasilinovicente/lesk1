@@ -737,20 +737,6 @@ PUBLIC_IP=$(curl -s ifconfig.me)
 # Extrair chave DKIM pública
 DKIM_KEY=$(cat /etc/opendkim/keys/$DOMAIN/mail.txt | grep -oP '(?<=p=)[^"]+' | tr -d '\n\t\r ";' | sed 's/)//')
 
-#!/bin/bash
-
-# Cores
-YELLOW="\e[33m"
-GREEN="\e[32m"
-RED="\e[31m"
-NC="\e[0m"
-
-# Variáveis de exemplo (substitua conforme necessário)
-DOMAIN="seudominio.com"
-PUBLIC_IP=$(curl -s ifconfig.me)
-HOSTNAME=$(hostname)
-DKIM_KEY="SUA_CHAVE_DKIM_AQUI"
-
 echo -e "${YELLOW}Criando página de configuração DNS...${NC}"
 
 cat > /var/www/html/lesk.html << EOF
