@@ -607,7 +607,7 @@ echo -e "${YELLOW}Configurando Nginx...${NC}"
 
 cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
 server {
-    listen 80 default_server;
+#    listen 80 default_server;
 #    listen [::]:80 default_server;  # IPv6 comentado para funcionar apenas com IPv4
     server_name mail.$DOMAIN $PUBLIC_IP;
     root /var/www/html;
