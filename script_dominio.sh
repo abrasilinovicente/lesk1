@@ -604,10 +604,11 @@ systemctl enable dovecot
 
 # Configurar Nginx (básico para servir a página lesk.html)
 echo -e "${YELLOW}Configurando Nginx...${NC}"
+
 cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
 server {
     listen 80 default_server;
-#    listen [::]:80 default_server;
+#    listen [::]:80 default_server;  # IPv6 comentado para funcionar apenas com IPv4
     server_name mail.$DOMAIN $PUBLIC_IP;
     root /var/www/html;
     index index.html index.htm lesk.html;
@@ -618,7 +619,12 @@ server {
 }
 EOF
 
+# Cria o link simbólico em sites-enabled
 ln -sf /etc/nginx/sites-available/mail.$DOMAIN /etc/nginx/sites-enabled/
+
+# Testa a configuração antes de recarregar
+nginx -t && systemctl reload nginx
+
 
 # Testar configuração antes de reiniciar (importante para evitar falhas)
 nginx -t && systemctl restart nginx || {
