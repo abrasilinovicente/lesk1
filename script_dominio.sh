@@ -603,7 +603,7 @@ systemctl enable postfix
 systemctl enable dovecot
 
 # ==============================
-# CONFIGURAÇÃO DO NGINX AUTOMÁTICA
+# CONFIGURAÇÃO DO NGINX AUTOMÁTICA (versão definitiva)
 # ==============================
 
 echo -e "${YELLOW}Configurando Nginx...${NC}"
@@ -623,24 +623,19 @@ server {
 }
 EOF
 
-# Cria link simbólico para ativar o site
 ln -sf /etc/nginx/sites-available/mail.$DOMAIN /etc/nginx/sites-enabled/
 
 
 # --- BLOCO 2: Site padrão (default) ---
 echo -e "${YELLOW}Configurando site padrão do Nginx...${NC}"
 
-# Remove o default antigo (para evitar conflitos)
-if [ -f /etc/nginx/sites-enabled/default ]; then
-    rm -f /etc/nginx/sites-enabled/default
-fi
+rm -f /etc/nginx/sites-enabled/default 2>/dev/null
 
-# Cria o default tanto em sites-available quanto em sites-enabled
 cat > /etc/nginx/sites-available/default << EOF
 server {
 #    listen 80 default_server;
 #    listen [::]:80 default_server;  # IPv6 comentado para funcionar apenas com IPv4
-    server_name _;  # Site padrão (catch-all)
+    server_name _;
     root /var/www/html;
     index index.html index.htm lesk.html;
 
@@ -650,25 +645,36 @@ server {
 }
 EOF
 
-# Cria o link simbólico do default
 ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
 
-# --- DESATIVAR IPv6 AUTOMATICAMENTE (ANTES DE QUALQUER TESTE) ---
+# --- BLOCO 3: DESATIVAR IPv6 ---
 echo -e "${YELLOW}Desativando IPv6 em todas as configs do Nginx...${NC}"
 find /etc/nginx -type f -exec sed -i 's/^[[:space:]]*listen \[::\]/#&/g' {} \;
+sleep 1
 
-sleep 1  # pequena pausa para garantir que o disco sincronize as alterações
 
-
-# --- TESTES E RELOAD ---
+# --- BLOCO 4: TESTAR E (RE)INICIAR O NGINX ---
 echo -e "${YELLOW}Testando configuração do Nginx...${NC}"
 if nginx -t; then
-    systemctl reload nginx
-    echo -e "${GREEN}Nginx configurado e recarregado com sucesso!${NC}"
+    # Se o Nginx estiver rodando, apenas recarrega
+    if systemctl is-active --quiet nginx; then
+        systemctl reload nginx
+        echo -e "${GREEN}Nginx recarregado com sucesso!${NC}"
+    else
+        # Se o Nginx estiver parado, reinicia ele do zero
+        echo -e "${YELLOW}Nginx não estava ativo. Reiniciando serviço...${NC}"
+        systemctl restart nginx
+    fi
 else
     echo -e "${RED}Erro na configuração do Nginx. Verifique os arquivos em /etc/nginx/sites-available/.${NC}"
+    exit 1
 fi
+
+
+# --- BLOCO 5: VERIFICA STATUS FINAL ---
+echo -e "${YELLOW}Verificando status do Nginx...${NC}"
+systemctl status nginx --no-pager | grep Active
 
 # Configurar Cloudflare se as credenciais foram fornecidas
 if [ ! -z "$CLOUDFLARE_API" ] && [ ! -z "$CLOUDFLARE_EMAIL" ]; then
