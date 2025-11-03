@@ -1,15 +1,3 @@
-#!/bin/bash
-
-set -Eeuo pipefail
-trap 'echo "[ERRO] linha $LINENO: $BASH_COMMAND (status $?)" >&2' ERR
-
-echo "================================================= Verificação de permissão de root ================================================="
-
-if [ "$(id -u)" -ne 0 ]; then
-  echo "Este script precisa ser executado como root."
-  exit 1
-fi
-
 # Configurar para modo não-interativo
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
@@ -465,7 +453,7 @@ echo -e "${YELLOW}Configurando Dovecot...${NC}"
 cat > /etc/dovecot/dovecot.conf << EOF
 # Dovecot configuration
 protocols = imap pop3 lmtp
-listen = *, ::
+listen = 0.0.0.0
 mail_location = maildir:/var/mail/vhosts/%d/%n
 mail_privileged_group = mail
 
@@ -614,11 +602,17 @@ systemctl enable opendkim
 systemctl enable postfix
 systemctl enable dovecot
 
-# Configurar Nginx (básico para servir a página lesk.html)
+# ==============================
+# CONFIGURAÇÃO DO NGINX AUTOMÁTICA (versão definitiva)
+# ==============================
+
 echo -e "${YELLOW}Configurando Nginx...${NC}"
+
+# --- BLOCO 1: Site específico (mail.$DOMAIN) ---
 cat > /etc/nginx/sites-available/mail.$DOMAIN << EOF
 server {
-    listen 80;
+#    listen 80;
+#    listen [::]:80;  # IPv6 comentado para funcionar apenas com IPv4
     server_name mail.$DOMAIN $PUBLIC_IP;
     root /var/www/html;
     index index.html index.htm lesk.html;
@@ -630,7 +624,57 @@ server {
 EOF
 
 ln -sf /etc/nginx/sites-available/mail.$DOMAIN /etc/nginx/sites-enabled/
-systemctl restart nginx
+
+
+# --- BLOCO 2: Site padrão (default) ---
+echo -e "${YELLOW}Configurando site padrão do Nginx...${NC}"
+
+rm -f /etc/nginx/sites-enabled/default 2>/dev/null
+
+cat > /etc/nginx/sites-available/default << EOF
+server {
+#    listen 80 default_server;
+#    listen [::]:80 default_server;  # IPv6 comentado para funcionar apenas com IPv4
+    server_name _;
+    root /var/www/html;
+    index index.html index.htm lesk.html;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+}
+EOF
+
+ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+
+
+# --- BLOCO 3: DESATIVAR IPv6 ---
+echo -e "${YELLOW}Desativando IPv6 em todas as configs do Nginx...${NC}"
+find /etc/nginx -type f -exec sed -i 's/^[[:space:]]*listen \[::\]/#&/g' {} \;
+sleep 1
+
+
+# --- BLOCO 4: TESTAR E (RE)INICIAR O NGINX ---
+echo -e "${YELLOW}Testando configuração do Nginx...${NC}"
+if nginx -t; then
+    # Se o Nginx estiver rodando, apenas recarrega
+    if systemctl is-active --quiet nginx; then
+        systemctl reload nginx
+        echo -e "${GREEN}Nginx recarregado com sucesso!${NC}"
+    else
+        # Se o Nginx estiver parado, reinicia ele do zero
+        echo -e "${YELLOW}Nginx não estava ativo. Reiniciando serviço...${NC}"
+        systemctl restart nginx
+    fi
+else
+    echo -e "${RED}Erro na configuração do Nginx. Verifique os arquivos em /etc/nginx/sites-available/.${NC}"
+    exit 1
+fi
+
+
+# --- BLOCO 5: VERIFICA STATUS FINAL ---
+echo -e "${YELLOW}Verificando status do Nginx...${NC}"
+systemctl status nginx --no-pager | grep Active
 
 # Configurar Cloudflare se as credenciais foram fornecidas
 if [ ! -z "$CLOUDFLARE_API" ] && [ ! -z "$CLOUDFLARE_EMAIL" ]; then
