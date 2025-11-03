@@ -1,8 +1,3 @@
-#!/bin/bash
-
-set -Eeuo pipefail
-trap 'echo "[ERRO] linha $LINENO: $BASH_COMMAND (status $?)" >&2' ERR
-
 #================================================================================
 # Script de Configuração Final (v3.0 - Com Cloudflare)
 #================================================================================
