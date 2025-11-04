@@ -678,369 +678,99 @@ for usuario in "${USUARIOS[@]}"; do
                 </div>"
 done
 
-cat > /var/www/html/index.html << 'EOFHTML'
+cat <<EOFHTML > /var/www/html/index.html
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Configuração SMTP - DOMAIN_PLACEHOLDER</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .header {
-            background: white;
-            border-radius: 15px;
-            padding: 30px;
-            margin-bottom: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-            text-align: center;
-        }
-        .header h1 { color: #667eea; font-size: 2rem; margin-bottom: 10px; }
-        .ip-display {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 15px 25px;
-            border-radius: 10px;
-            font-size: 1.3rem;
-            font-weight: bold;
-            margin: 15px 0;
-            display: inline-block;
-        }
-        .dns-card {
-            background: white;
-            border-radius: 15px;
-            padding: 25px;
-            margin-bottom: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-        }
-        .dns-type {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 8px 20px;
-            border-radius: 20px;
-            font-weight: bold;
-            display: inline-block;
-            margin-bottom: 15px;
-            font-size: 1.1rem;
-        }
-        .dns-field {
-            margin: 12px 0;
-            padding: 12px;
-            background: #f8f9fa;
-            border-radius: 8px;
-        }
-        .dns-field strong {
-            color: #667eea;
-            display: block;
-            margin-bottom: 8px;
-            font-size: 0.95rem;
-        }
-        .dns-value {
-            background: #ffffff;
-            border: 2px solid #667eea;
-            padding: 12px 15px;
-            border-radius: 8px;
-            font-family: 'Courier New', monospace;
-            font-size: 14px;
-            word-break: break-all;
-            cursor: pointer;
-            transition: all 0.3s;
-            position: relative;
-        }
-        .dns-value:hover {
-            background: #f0f0f0;
-            border-color: #764ba2;
-        }
-        .dns-value::after {
-            content: '📋 Clique para copiar';
-            position: absolute;
-            right: 10px;
-            top: 50%;
-            transform: translateY(-50%);
-            font-size: 11px;
-            color: #999;
-            font-family: 'Segoe UI', sans-serif;
-        }
-        .info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 15px;
-        }
-        .info-item {
-            padding: 15px;
-            background: #f9f9f9;
-            border-radius: 10px;
-            border-left: 4px solid #667eea;
-        }
-        .info-item strong {
-            color: #667eea;
-            display: block;
-            margin-bottom: 5px;
-        }
-        .warning {
-            background: #fff3cd;
-            border-left: 4px solid #ffc107;
-            padding: 20px;
-            margin-bottom: 20px;
-            border-radius: 8px;
-        }
-        .warning ul {
-            margin-left: 20px;
-            margin-top: 10px;
-        }
-        .warning li {
-            margin: 8px 0;
-        }
-        .success-msg {
-            background: #d4edda;
-            border-left: 4px solid #28a745;
-            padding: 15px;
-            margin-bottom: 20px;
-            border-radius: 8px;
-            color: #155724;
-        }
-        .auth-config {
-            background: #e7f3ff;
-            border-left: 4px solid #2196F3;
-            padding: 20px;
-            margin-bottom: 20px;
-            border-radius: 8px;
-        }
-        .auth-config h3 {
-            color: #1976D2;
-            margin-bottom: 15px;
-        }
-        .copy-notification {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: #28a745;
-            color: white;
-            padding: 15px 25px;
-            border-radius: 10px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-            display: none;
-            z-index: 1000;
-        }
-        code {
-            background: #f4f4f4;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: 'Courier New', monospace;
-        }
-        .port-info {
-            background: #fff9e6;
-            border: 2px solid #ffc107;
-            padding: 15px;
-            border-radius: 8px;
-            margin-top: 10px;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Informações de Configuração de E-mail</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background-color: #f6f8fa;
+    color: #333;
+    line-height: 1.6;
+    padding: 30px;
+  }
+  h2 {
+    color: #004aad;
+  }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 25px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    margin-bottom: 20px;
+  }
+  .section-title {
+    color: #004aad;
+    font-size: 1.2em;
+    margin-bottom: 10px;
+  }
+  code {
+    background: #f2f2f2;
+    padding: 3px 6px;
+    border-radius: 4px;
+  }
+</style>
 </head>
 <body>
-    <div id="copyNotification" class="copy-notification">✓ Copiado!</div>
-    
-    <div class="container">
-        <div class="header">
-            <h1>⚙️ Configuração SMTP Concluída</h1>
-            <p style="margin: 10px 0;"><strong>Domínio:</strong> FULL_DOMAIN_PLACEHOLDER</p>
-            <div class="ip-display">🌐 IP do Servidor: PUBLIC_IP_PLACEHOLDER</div>
-            <p style="margin-top: 10px;"><strong>Total de usuários criados:</strong> CONTADOR_PLACEHOLDER</p>
-            <p style="margin-top: 5px; color: #666;"><small>🔐 DKIM: 1024 bits | Autenticação SASL: ✓ | IPv6: Desabilitado</small></p>
-        </div>
 
-        <div class="success-msg">
-            <strong>✅ Instalação concluída com autenticação SASL e correção IPv6!</strong>
-            <p style="margin-top: 8px;">Todos os serviços configurados. Configure os DNS e teste.</p>
-        </div>
+  <h2>📧 Configuração de E-mail</h2>
 
-        <!-- CONFIGURAÇÃO DE AUTENTICAÇÃO -->
-        <div class="auth-config">
-            <h3>🔐 CONFIGURAÇÃO DE AUTENTICAÇÃO SMTP</h3>
-            <p><strong>IMPORTANTE:</strong> Use estas configurações no seu cliente de email:</p>
-            <ul style="margin-top: 15px; margin-left: 20px;">
-                <li><strong>Servidor SMTP:</strong> <code>FULL_DOMAIN_PLACEHOLDER</code></li>
-                <li><strong>Porta:</strong> <code>587</code> (submission - RECOMENDADO) ou <code>25</code></li>
-                <li><strong>Tipo de segurança:</strong> STARTTLS (porta 587) ou Nenhum (porta 25)</li>
-                <li><strong>Requer autenticação:</strong> SIM ✓</li>
-                <li><strong>Nome de usuário:</strong> Email completo (ex: admin@BASE_DOMAIN_PLACEHOLDER)</li>
-                <li><strong>Senha:</strong> A senha do usuário</li>
-            </ul>
-            <div class="port-info">
-                <strong>⚡ Porta 587 vs Porta 25:</strong>
-                <ul style="margin-left: 20px; margin-top: 8px;">
-                    <li><strong>Porta 587:</strong> Submission port, usa STARTTLS, mais segura ✓</li>
-                    <li><strong>Porta 25:</strong> Porta padrão SMTP, sem criptografia obrigatória</li>
-                </ul>
-            </div>
-        </div>
+  <div class="card">
+    <div class="section-title">Servidor SMTP (Envio)</div>
+    <p><strong>Servidor:</strong> ${SUBDOMAIN}.${DOMAIN}<br>
+    <strong>Porta SMTP:</strong> 587 (STARTTLS) ou 25<br>
+    <strong>Autenticação SMTP:</strong> ✓ Obrigatória</p>
+  </div>
 
-        <div class="warning">
-            <strong>⚠️ IMPORTANTE - CONFIGURAÇÃO DNS:</strong>
-            <ul>
-                <li><strong>Use <code>~all</code> no SPF</strong> (NÃO use <code>-all</code>)</li>
-                <li><strong>IP detectado:</strong> <code>PUBLIC_IP_PLACEHOLDER</code> - Verifique se está correto!</li>
-                <li>Configure TODOS os registros DNS abaixo</li>
-                <li>Aguarde 1-6 horas para propagação DNS</li>
-                <li>Teste autenticação SMTP na porta 587</li>
-            </ul>
-        </div>
+  <div class="card">
+    <div class="section-title">Servidor IMAP (Recebimento)</div>
+    <p><strong>Servidor:</strong> ${SUBDOMAIN}.${DOMAIN}<br>
+    <strong>Porta IMAP:</strong> 143 (STARTTLS)</p>
+  </div>
 
-        <!-- USUÁRIOS -->
-        <div class="dns-card">
-            <span class="dns-type">👥 USUÁRIOS DE EMAIL (CONTADOR_PLACEHOLDER)</span>
-            <div class="info-grid">USERS_HTML_PLACEHOLDER
-            </div>
-        </div>
+  <div class="card">
+    <div class="section-title">🔵 Registro A</div>
+    <p><strong>Tipo:</strong> A<br>
+    <strong>Nome/Host:</strong> ${SUBDOMAIN}.${DOMAIN}<br>
+    <strong>IP:</strong> ${IP}</p>
+  </div>
 
-        <!-- SERVIDOR -->
-        <div class="dns-card">
-            <span class="dns-type">📧 CONFIGURAÇÕES DO SERVIDOR</span>
-            <div class="info-grid">
-                <div class="info-item">
-                    <strong>Servidor SMTP (Envio)</strong>
-                    <span>FULL_DOMAIN_PLACEHOLDER</span>
-                </div>
-                <div class="info-item">
-                    <strong>Porta SMTP</strong>
-                    <span>587 (STARTTLS) ou 25</span>
-                </div>
-                <div class="info-item">
-                    <strong>Autenticação SMTP</strong>
-                    <span>✓ Obrigatória</span>
-                </div>
-                <div class="info-item">
-                    <strong>Servidor IMAP</strong>
-                    <span>FULL_DOMAIN_PLACEHOLDER</span>
-                </div>
-                <div class="info-item">
-                    <strong>Porta IMAP</strong>
-                    <span>143</span>
-                </div>
-            </div>
-        </div>
+  <div class="card">
+    <div class="section-title">📨 Registro MX</div>
+    <p><strong>Tipo:</strong> MX<br>
+    <strong>Nome:</strong> @<br>
+    <strong>Servidor:</strong> ${SUBDOMAIN}.${DOMAIN}<br>
+    <strong>Prioridade:</strong> 10</p>
+  </div>
 
-        <!-- REGISTRO A -->
-        <div class="dns-card">
-            <span class="dns-type">🔵 Registro A</span>
-            <div class="dns-field">
-                <strong>Tipo:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'A')">A</div>
-            </div>
-            <div class="dns-field">
-                <strong>Nome/Host:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'SUBDOMAIN_PLACEHOLDER')">SUBDOMAIN_PLACEHOLDER</div>
-            </div>
-            <div class="dns-field">
-                <strong>IP:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'PUBLIC_IP_PLACEHOLDER')">PUBLIC_IP_PLACEHOLDER</div>
-            </div>
-        </div>
+  <div class="card">
+    <div class="section-title">🧩 Registro TXT (SPF)</div>
+    <p><strong>Tipo:</strong> TXT<br>
+    <strong>Nome:</strong> @<br>
+    <strong>Valor:</strong><br>
+    <code>"v=spf1 a mx include:${SUBDOMAIN}.${DOMAIN} ~all"</code></p>
+  </div>
 
-        <!-- REGISTRO MX -->
-        <div class="dns-card">
-            <span class="dns-type">📨 Registro MX</span>
-            <div class="dns-field">
-                <strong>Tipo:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'MX')">MX</div>
-            </div>
-            <div class="dns-field">
-                <strong>Nome:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, '@')">@</div>
-            </div>
-            <div class="dns-field">
-                <strong>Servidor:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'FULL_DOMAIN_PLACEHOLDER')">FULL_DOMAIN_PLACEHOLDER</div>
-            </div>
-            <div class="dns-field">
-                <strong>Prioridade:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, '10')">10</div>
-            </div>
-        </div>
+  <div class="card">
+    <div class="section-title">🔐 Registro TXT (DKIM)</div>
+    <p><strong>Tipo:</strong> TXT<br>
+    <strong>Nome:</strong> <code>${DKIM_SELECTOR}._domainkey.${DOMAIN}</code><br>
+    <strong>Valor:</strong><br>
+    <code>${DKIM_PUBLIC_KEY}</code></p>
+  </div>
 
-        <!-- SPF -->
-        <div class="dns-card">
-            <span class="dns-type">🔒 SPF</span>
-            <div class="dns-field">
-                <strong>Tipo:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'TXT')">TXT</div>
-            </div>
-            <div class="dns-field">
-                <strong>Nome:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, '@')">@</div>
-            </div>
-            <div class="dns-field">
-                <strong>Valor:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'SPF_VALUE_PLACEHOLDER')">SPF_VALUE_PLACEHOLDER</div>
-            </div>
-        </div>
+  <div class="card">
+    <div class="section-title">🛡️ Registro TXT (DMARC)</div>
+    <p><strong>Tipo:</strong> TXT<br>
+    <strong>Nome:</strong> <code>_dmarc.${DOMAIN}</code><br>
+    <strong>Valor:</strong><br>
+    <code>"v=DMARC1; p=none; rua=mailto:dmarc@${DOMAIN}"</code></p>
+  </div>
 
-        <!-- DKIM -->
-        <div class="dns-card">
-            <span class="dns-type">🔐 DKIM</span>
-            <div class="dns-field">
-                <strong>Tipo:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'TXT')">TXT</div>
-            </div>
-            <div class="dns-field">
-                <strong>Nome:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'DKIM_NAME_PLACEHOLDER')">DKIM_NAME_PLACEHOLDER</div>
-            </div>
-            <div class="dns-field">
-                <strong>Valor:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'DKIM_VALUE_PLACEHOLDER')">DKIM_VALUE_PLACEHOLDER</div>
-            </div>
-        </div>
-
-        <!-- DMARC -->
-        <div class="dns-card">
-            <span class="dns-type">📋 DMARC</span>
-            <div class="dns-field">
-                <strong>Tipo:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'TXT')">TXT</div>
-            </div>
-            <div class="dns-field">
-                <strong>Nome:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, '_dmarc')">_dmarc</div>
-            </div>
-            <div class="dns-field">
-                <strong>Valor:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'DMARC_VALUE_PLACEHOLDER')">DMARC_VALUE_PLACEHOLDER</div>
-            </div>
-        </div>
-
-    </div>
-
-    <script>
-        function copyToClipboard(element, text) {
-            const textToCopy = text || element.textContent.trim();
-            
-            navigator.clipboard.writeText(textToCopy).then(() => {
-                const original = element.style.background;
-                const originalBorder = element.style.borderColor;
-                element.style.background = '#28a745';
-                element.style.borderColor = '#28a745';
-                element.style.color = 'white';
-                
-                const notification = document.getElementById('copyNotification');
-                notification.style.display = 'block';
-                
-                setTimeout(() => {
-                    element.style.background = original;
-                    element.style.borderColor = originalBorder;
-                    element.style.color = '';
-                    notification.style.display = 'none';
-                }, 1500);
-            });
-        }
-    </script>
 </body>
 </html>
 EOFHTML
