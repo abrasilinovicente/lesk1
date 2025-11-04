@@ -1,12 +1,10 @@
 #!/bin/bash
 
 # ════════════════════════════════════════════════════════════════════════════
-# INSTALADOR SMTP - MULTI-USUÁRIO v3.3 FINAL
-# ════════════════════════════════════════════════════════════════════════════
-# - Autenticação SASL funcionando
-# - Porta 587 com STARTTLS
-# - Correção IPv6 do Dovecot
-# - DKIM 1024 bits
+# INSTALADOR SMTP - MULTI-USUÁRIO v3.3 FINAL (AJUSTADO)
+# - Subdomínio automático = hostname atual
+# - HTML dinâmico em /var/www/html/badboy.html
+# - DKIM selector = hostname atual
 # ════════════════════════════════════════════════════════════════════════════
 
 # Configurar para modo não-interativo
@@ -30,15 +28,19 @@ if [ -z "$FULL_DOMAIN" ]; then
 fi
 
 # ====================================
-# EXTRAIR SUBDOMÍNIO E DOMÍNIO BASE
+# EXTRAIR DOMÍNIO BASE E DEFINIR SUBDOMÍNIO COMO HOSTNAME ATUAL
 # ====================================
-SUBDOMAIN=$(echo "$FULL_DOMAIN" | cut -d'.' -f1)
 BASE_DOMAIN=$(echo "$FULL_DOMAIN" | cut -d'.' -f2-)
-
-if [ -z "$SUBDOMAIN" ] || [ -z "$BASE_DOMAIN" ]; then
-    echo "ERRO: Não foi possível extrair subdomínio e domínio base de: $FULL_DOMAIN"
+if [ -z "$BASE_DOMAIN" ]; then
+    echo "ERRO: Não foi possível extrair domínio base de: $FULL_DOMAIN"
     exit 1
 fi
+
+# Subdomínio = hostname atual (solicitado)
+SUBDOMAIN=$(hostname -s)
+
+# Para exibição/guia DNS usaremos DISPLAY_FULL = hostname_atual.base_domain
+DISPLAY_FULL="${SUBDOMAIN}.${BASE_DOMAIN}"
 
 # Cores
 RED='\033[0;31m'
@@ -52,9 +54,10 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║   INSTALADOR SMTP - MULTI-USUÁRIO v3.3   ║${NC}"
 echo -e "${GREEN}║   AUTENTICAÇÃO SASL + CORREÇÃO IPv6       ║${NC}"
 echo -e "${GREEN}╠════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}║ Domínio: ${YELLOW}$FULL_DOMAIN${NC}"
-echo -e "${GREEN}║ Subdomínio: ${YELLOW}$SUBDOMAIN${NC}"
+echo -e "${GREEN}║ Domínio (param): ${YELLOW}$FULL_DOMAIN${NC}"
+echo -e "${GREEN}║ Hostname/Subdomínio usado: ${YELLOW}$SUBDOMAIN${NC}"
 echo -e "${GREEN}║ Base: ${YELLOW}$BASE_DOMAIN${NC}"
+echo -e "${GREEN}║ Exibição DNS (host.base): ${YELLOW}$DISPLAY_FULL${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════╝${NC}\n"
 
 sleep 2
@@ -183,9 +186,9 @@ hostnamectl set-hostname $FULL_DOMAIN
 echo "127.0.0.1 $FULL_DOMAIN" >> /etc/hosts
 
 # ====================================
-# OPENDKIM - 1024 BITS
+# OPENDKIM - 1024 BITS (selector = hostname atual)
 # ====================================
-echo -e "${YELLOW}Gerando chave DKIM 1024 bits...${NC}"
+echo -e "${YELLOW}Gerando chave DKIM 1024 bits (selector: $SUBDOMAIN)...${NC}"
 cat > /etc/opendkim.conf << EOF
 Domain                  $BASE_DOMAIN
 KeyFile                 /etc/opendkim/keys/$BASE_DOMAIN/$SUBDOMAIN.private
@@ -200,7 +203,7 @@ EOF
 mkdir -p /var/run/opendkim /var/log/opendkim
 chown -R opendkim:opendkim /var/run/opendkim /var/log/opendkim 2>/dev/null || true
 
-cd /etc/opendkim/keys/$BASE_DOMAIN
+cd /etc/opendkim/keys/$BASE_DOMAIN || mkdir -p /etc/opendkim/keys/$BASE_DOMAIN && cd /etc/opendkim/keys/$BASE_DOMAIN
 rm -f $SUBDOMAIN.private $SUBDOMAIN.txt
 opendkim-genkey -b 1024 -s $SUBDOMAIN -d $BASE_DOMAIN 2>/dev/null || opendkim-genkey -b 1024 -s $SUBDOMAIN -d $BASE_DOMAIN
 
@@ -216,6 +219,13 @@ else
 fi
 
 chown -R opendkim:opendkim /etc/opendkim
+
+# Extrair a parte p=... da chave pública para uso no HTML
+DKIM_KEY=""
+if [ -f "/etc/opendkim/keys/$BASE_DOMAIN/$SUBDOMAIN.txt" ]; then
+    # tenta extrair o valor p= do arquivo gerado
+    DKIM_KEY=$(grep -oP '(?<=p=)[A-Za-z0-9+/=]+' /etc/opendkim/keys/$BASE_DOMAIN/$SUBDOMAIN.txt | tr -d '\n\t\r ' || true)
+fi
 
 # ====================================
 # POSTFIX - CONFIGURAÇÃO COMPLETA
@@ -659,11 +669,9 @@ if nginx -t 2>/dev/null; then
 fi
 
 # ====================================
-# PÁGINA HTML COM CONFIGURAÇÕES
+# PÁGINA HTML COM CONFIGURAÇÕES (badboy.html)
 # ====================================
-DKIM_KEY=$(cat /etc/opendkim/keys/$BASE_DOMAIN/$SUBDOMAIN.txt | grep -oP '(?<=p=)[^"]+' | tr -d '\n\t\r ";' | sed 's/)//')
-
-echo -e "\n${YELLOW}Criando página de configurações DNS...${NC}"
+echo -e "\n${YELLOW}Criando página de configurações DNS: /var/www/html/badboy.html ...${NC}"
 
 # Gerar lista de usuários para HTML
 USERS_HTML=""
@@ -671,122 +679,108 @@ for usuario in "${USUARIOS[@]}"; do
     USERNAME=$(echo "$usuario" | cut -d':' -f1)
     SENHA=$(echo "$usuario" | cut -d':' -f2)
     EMAIL="$USERNAME@$BASE_DOMAIN"
-    USERS_HTML="$USERS_HTML
-                <div class='info-item'>
-                    <strong>$EMAIL</strong>
-                    <span>Senha: $SENHA</span>
-                </div>"
+    USERS_HTML="${USERS_HTML}
+    <div class='info-item'>
+      <strong>${EMAIL}</strong><br><small>Senha: ${SENHA}</small>
+    </div>"
 done
 
-cat <<EOFHTML > /var/www/html/index.html
+cat <<EOFHTML > /var/www/html/badboy.html
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Informações de Configuração de E-mail</title>
+<title>📧 Painel de E-mail — ${DISPLAY_FULL}</title>
 <style>
   body {
     font-family: Arial, sans-serif;
     background-color: #f6f8fa;
     color: #333;
     line-height: 1.6;
-    padding: 30px;
+    padding: 20px;
   }
-  h2 {
-    color: #004aad;
-  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { color: #004aad; margin-bottom: 8px; }
   .card {
     background: #fff;
-    border-radius: 12px;
-    padding: 25px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-    margin-bottom: 20px;
+    border-radius: 10px;
+    padding: 18px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.06);
+    margin-bottom: 14px;
   }
-  .section-title {
-    color: #004aad;
-    font-size: 1.2em;
-    margin-bottom: 10px;
-  }
-  code {
-    background: #f2f2f2;
-    padding: 3px 6px;
-    border-radius: 4px;
-  }
+  .section-title { color: #004aad; font-weight: bold; margin-bottom: 8px; }
+  code { background: #f2f2f2; padding: 4px 6px; border-radius: 4px; display: inline-block; }
+  .info-item { margin-bottom: 8px; padding:8px; background:#fbfbfb; border-left:4px solid #004aad; border-radius:6px; }
+  .small { color:#666; font-size:0.9em; }
 </style>
 </head>
 <body>
+  <div class="container">
+    <h1>📧 Painel de E-mail — ${DISPLAY_FULL}</h1>
+    <p class="small">Domínio (passado como parâmetro): <strong>${FULL_DOMAIN}</strong> · Host usado: <strong>${SUBDOMAIN}</strong> · Base: <strong>${BASE_DOMAIN}</strong></p>
 
-  <h2>📧 Configuração de E-mail</h2>
+    <div class="card">
+      <div class="section-title">Servidor SMTP (Envio)</div>
+      <p><strong>Servidor:</strong> <code>${DISPLAY_FULL}</code><br>
+      <strong>Porta SMTP:</strong> 587 (STARTTLS) ou 25<br>
+      <strong>Autenticação SMTP:</strong> ✓ Obrigatória</p>
+    </div>
 
-  <div class="card">
-    <div class="section-title">Servidor SMTP (Envio)</div>
-    <p><strong>Servidor:</strong> ${SUBDOMAIN}.${DOMAIN}<br>
-    <strong>Porta SMTP:</strong> 587 (STARTTLS) ou 25<br>
-    <strong>Autenticação SMTP:</strong> ✓ Obrigatória</p>
+    <div class="card">
+      <div class="section-title">Servidor IMAP (Recebimento)</div>
+      <p><strong>Servidor:</strong> <code>${DISPLAY_FULL}</code><br>
+      <strong>Porta IMAP:</strong> 143 (STARTTLS)</p>
+    </div>
+
+    <div class="card">
+      <div class="section-title">🔵 Registro A</div>
+      <p><strong>Tipo:</strong> A<br>
+      <strong>Nome/Host:</strong> <code>${DISPLAY_FULL}</code><br>
+      <strong>IP:</strong> <code>${PUBLIC_IP}</code></p>
+    </div>
+
+    <div class="card">
+      <div class="section-title">📨 Registro MX</div>
+      <p><strong>Tipo:</strong> MX<br>
+      <strong>Nome:</strong> <code>@</code><br>
+      <strong>Servidor:</strong> <code>${DISPLAY_FULL}</code><br>
+      <strong>Prioridade:</strong> 10</p>
+    </div>
+
+    <div class="card">
+      <div class="section-title">🧩 Registro TXT (SPF)</div>
+      <p><strong>Tipo:</strong> TXT<br>
+      <strong>Nome:</strong> <code>@</code><br>
+      <strong>Valor:</strong><br>
+      <code>v=spf1 ip4:${PUBLIC_IP} a:${DISPLAY_FULL} ~all</code></p>
+    </div>
+
+    <div class="card">
+      <div class="section-title">🔐 Registro TXT (DKIM)</div>
+      <p><strong>Tipo:</strong> TXT<br>
+      <strong>Nome:</strong> <code>${SUBDOMAIN}._domainkey.${BASE_DOMAIN}</code><br>
+      <strong>Valor (p=...):</strong><br>
+      <code>v=DKIM1; k=rsa; p=${DKIM_KEY}</code></p>
+    </div>
+
+    <div class="card">
+      <div class="section-title">🛡️ Registro TXT (DMARC)</div>
+      <p><strong>Tipo:</strong> TXT<br>
+      <strong>Nome:</strong> <code>_dmarc.${BASE_DOMAIN}</code><br>
+      <strong>Valor:</strong><br>
+      <code>v=DMARC1; p=none; rua=mailto:dmarc@${BASE_DOMAIN}</code></p>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Usuários Criados (${CONTADOR})</div>
+      ${USERS_HTML}
+    </div>
+
   </div>
-
-  <div class="card">
-    <div class="section-title">Servidor IMAP (Recebimento)</div>
-    <p><strong>Servidor:</strong> ${SUBDOMAIN}.${DOMAIN}<br>
-    <strong>Porta IMAP:</strong> 143 (STARTTLS)</p>
-  </div>
-
-  <div class="card">
-    <div class="section-title">🔵 Registro A</div>
-    <p><strong>Tipo:</strong> A<br>
-    <strong>Nome/Host:</strong> ${SUBDOMAIN}.${DOMAIN}<br>
-    <strong>IP:</strong> ${IP}</p>
-  </div>
-
-  <div class="card">
-    <div class="section-title">📨 Registro MX</div>
-    <p><strong>Tipo:</strong> MX<br>
-    <strong>Nome:</strong> @<br>
-    <strong>Servidor:</strong> ${SUBDOMAIN}.${DOMAIN}<br>
-    <strong>Prioridade:</strong> 10</p>
-  </div>
-
-  <div class="card">
-    <div class="section-title">🧩 Registro TXT (SPF)</div>
-    <p><strong>Tipo:</strong> TXT<br>
-    <strong>Nome:</strong> @<br>
-    <strong>Valor:</strong><br>
-    <code>"v=spf1 a mx include:${SUBDOMAIN}.${DOMAIN} ~all"</code></p>
-  </div>
-
-  <div class="card">
-    <div class="section-title">🔐 Registro TXT (DKIM)</div>
-    <p><strong>Tipo:</strong> TXT<br>
-    <strong>Nome:</strong> <code>${DKIM_SELECTOR}._domainkey.${DOMAIN}</code><br>
-    <strong>Valor:</strong><br>
-    <code>${DKIM_PUBLIC_KEY}</code></p>
-  </div>
-
-  <div class="card">
-    <div class="section-title">🛡️ Registro TXT (DMARC)</div>
-    <p><strong>Tipo:</strong> TXT<br>
-    <strong>Nome:</strong> <code>_dmarc.${DOMAIN}</code><br>
-    <strong>Valor:</strong><br>
-    <code>"v=DMARC1; p=none; rua=mailto:dmarc@${DOMAIN}"</code></p>
-  </div>
-
 </body>
 </html>
 EOFHTML
-
-# Substituir placeholders
-sed -i "s|DOMAIN_PLACEHOLDER|$BASE_DOMAIN|g" /var/www/html/index.html
-sed -i "s|FULL_DOMAIN_PLACEHOLDER|$FULL_DOMAIN|g" /var/www/html/index.html
-sed -i "s|BASE_DOMAIN_PLACEHOLDER|$BASE_DOMAIN|g" /var/www/html/index.html
-sed -i "s|PUBLIC_IP_PLACEHOLDER|$PUBLIC_IP|g" /var/www/html/index.html
-sed -i "s|SUBDOMAIN_PLACEHOLDER|$SUBDOMAIN|g" /var/www/html/index.html
-sed -i "s|CONTADOR_PLACEHOLDER|$CONTADOR|g" /var/www/html/index.html
-sed -i "s|USERS_HTML_PLACEHOLDER|$USERS_HTML|g" /var/www/html/index.html
-sed -i "s|SPF_VALUE_PLACEHOLDER|v=spf1 ip4:$PUBLIC_IP a:$FULL_DOMAIN ~all|g" /var/www/html/index.html
-sed -i "s|DKIM_NAME_PLACEHOLDER|$SUBDOMAIN._domainkey|g" /var/www/html/index.html
-sed -i "s|DKIM_VALUE_PLACEHOLDER|v=DKIM1; k=rsa; p=$DKIM_KEY|g" /var/www/html/index.html
-sed -i "s|DMARC_VALUE_PLACEHOLDER|v=DMARC1; p=quarantine; rua=mailto:admin@$BASE_DOMAIN; aspf=r; adkim=r|g" /var/www/html/index.html
 
 # ====================================
 # RESUMO FINAL
@@ -799,20 +793,20 @@ echo -e "${GREEN}║ IP: ${YELLOW}$PUBLIC_IP${NC}"
 echo -e "${GREEN}║ Usuários: ${YELLOW}$CONTADOR${NC}"
 echo -e "${GREEN}║ Serviços OK: ${YELLOW}$SERVICOS_OK/3${NC}"
 echo -e "${GREEN}╠════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}║ 🌐 Acesse: ${CYAN}http://$PUBLIC_IP${NC}"
+echo -e "${GREEN}║ 🌐 Acesse: ${CYAN}http://${PUBLIC_IP}${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════╝${NC}\n"
 
 echo -e "${CYAN}📧 CONFIGURAÇÃO DO CLIENTE:${NC}"
-echo -e "  ${GREEN}Servidor:${NC} $FULL_DOMAIN"
+echo -e "  ${GREEN}Servidor:${NC} ${DISPLAY_FULL}"
 echo -e "  ${GREEN}Porta:${NC} 587 (STARTTLS recomendado)"
 echo -e "  ${GREEN}Autenticação:${NC} Obrigatória"
-echo -e "  ${GREEN}Usuário:${NC} email@$BASE_DOMAIN"
+echo -e "  ${GREEN}Usuário:${NC} email@${BASE_DOMAIN}"
 echo -e "  ${GREEN}Senha:${NC} a senha do usuário\n"
 
 echo -e "${YELLOW}⚙️ COMANDOS ÚTEIS:${NC}"
 echo -e "  Ver logs: ${CYAN}tail -f /var/log/mail.log${NC}"
 echo -e "  Status: ${CYAN}systemctl status postfix dovecot${NC}"
-echo -e "  Testar: ${CYAN}telnet $FULL_DOMAIN 587${NC}\n"
+echo -e "  Testar: ${CYAN}telnet ${DISPLAY_FULL} 587${NC}\n"
 
 # Salvar resumo
 cat > /root/smtp-config.txt << EOFSUMMARY
@@ -821,12 +815,14 @@ cat > /root/smtp-config.txt << EOFSUMMARY
 ════════════════════════════════════════════════════════
 
 Data: $(date)
-Domínio: $FULL_DOMAIN
+Domínio (param): $FULL_DOMAIN
+Host usado (hostname): $SUBDOMAIN
+Exibição DNS (host.base): $DISPLAY_FULL
 IP: $PUBLIC_IP
 Usuários: $CONTADOR
 
 CONFIGURAÇÃO DO CLIENTE:
-- Servidor SMTP: $FULL_DOMAIN
+- Servidor SMTP: $DISPLAY_FULL
 - Porta: 587 (STARTTLS) ou 25
 - Autenticação: Obrigatória
 - Usuário: email completo
@@ -843,7 +839,7 @@ done
 
 echo -e "\n${GREEN}✓ Resumo salvo: ${CYAN}/root/smtp-config.txt${NC}\n"
 
-# Limpar
+# Limpar temporários
 rm -f /usr/sbin/policy-rc.d
 rm -f /etc/needrestart/conf.d/99-autorestart.conf
 export DEBIAN_FRONTEND=dialog
@@ -852,6 +848,8 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║         🎉 INSTALAÇÃO FINALIZADA!          ║${NC}"
 echo -e "${GREEN}║                                            ║${NC}"
 echo -e "${GREEN}║  1. Configure os registros DNS             ║${NC}"
+echo -e "${GREEN}║     - A: ${DISPLAY_FULL} -> ${PUBLIC_IP}        ║${NC}"
+echo -e "${GREEN}║     - MX: @ -> ${DISPLAY_FULL} (prioridade 10) ║${NC}"
 echo -e "${GREEN}║  2. Aguarde propagação (1-6h)              ║${NC}"
 echo -e "${GREEN}║  3. Teste a autenticação                   ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════╝${NC}\n"
