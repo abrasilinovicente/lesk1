@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# ════════════════════════════════════════════════════════════════════════════
+# INSTALADOR SMTP - MULTI-USUÁRIO v3.3 FINAL
+# ════════════════════════════════════════════════════════════════════════════
+# - Autenticação SASL funcionando
+# - Porta 587 com STARTTLS
+# - Correção IPv6 do Dovecot
+# - DKIM 1024 bits
+# ════════════════════════════════════════════════════════════════════════════
+
 # Configurar para modo não-interativo
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
@@ -16,7 +25,7 @@ CLOUDFLARE_EMAIL=$4
 if [ -z "$FULL_DOMAIN" ]; then
     echo "ERRO: Domínio não fornecido!"
     echo "Uso: bash $0 <dominio_completo>"
-    echo "Exemplo: bash $0 cool.nexoeabogados.com"
+    echo "Exemplo: bash $0 mail.seudominio.com"
     exit 1
 fi
 
@@ -40,8 +49,8 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo -e "${GREEN}╔════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║   INSTALADOR SMTP - MULTI-USUÁRIO v3.2   ║${NC}"
-echo -e "${GREEN}║     AUTENTICAÇÃO SASL CORRIGIDA           ║${NC}"
+echo -e "${GREEN}║   INSTALADOR SMTP - MULTI-USUÁRIO v3.3   ║${NC}"
+echo -e "${GREEN}║   AUTENTICAÇÃO SASL + CORREÇÃO IPv6       ║${NC}"
 echo -e "${GREEN}╠════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║ Domínio: ${YELLOW}$FULL_DOMAIN${NC}"
 echo -e "${GREEN}║ Subdomínio: ${YELLOW}$SUBDOMAIN${NC}"
@@ -93,7 +102,9 @@ fi
 echo -e "${GREEN}✓ IP confirmado: $PUBLIC_IP${NC}\n"
 sleep 2
 
-# Função wait_for_apt
+# ====================================
+# FUNÇÃO WAIT_FOR_APT
+# ====================================
 wait_for_apt() {
     local max_attempts=60
     local attempt=0
@@ -122,7 +133,9 @@ wait_for_apt() {
 
 wait_for_apt
 
-# Configurações não-interativas
+# ====================================
+# CONFIGURAÇÕES NÃO-INTERATIVAS
+# ====================================
 echo '#!/bin/sh' > /usr/sbin/policy-rc.d
 echo 'exit 101' >> /usr/sbin/policy-rc.d
 chmod +x /usr/sbin/policy-rc.d
@@ -135,13 +148,17 @@ EOF
 
 apt-get update -y -qq
 
-# Pré-configurar Postfix
-echo -e "${YELLOW}Configurando Postfix...${NC}"
+# ====================================
+# PRÉ-CONFIGURAR POSTFIX
+# ====================================
+echo -e "${YELLOW}Pré-configurando Postfix...${NC}"
 wait_for_apt
 echo "postfix postfix/mailname string $BASE_DOMAIN" | debconf-set-selections
 echo "postfix postfix/main_mailer_type string 'Internet Site'" | debconf-set-selections
 
-# Instalar pacotes
+# ====================================
+# INSTALAR PACOTES
+# ====================================
 echo -e "${YELLOW}Instalando pacotes...${NC}"
 wait_for_apt
 PACKAGES="postfix opendkim opendkim-tools dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd libsasl2-2 libsasl2-modules sasl2-bin mailutils nginx ssl-cert"
@@ -153,11 +170,15 @@ for package in $PACKAGES; do
     fi
 done
 
-# Criar diretórios
+# ====================================
+# CRIAR DIRETÓRIOS
+# ====================================
 mkdir -p /var/www/html /etc/nginx/sites-{available,enabled} /var/mail/vhosts/$BASE_DOMAIN /etc/opendkim/keys/$BASE_DOMAIN
 rm -f /usr/sbin/policy-rc.d
 
-# Hostname
+# ====================================
+# HOSTNAME
+# ====================================
 hostnamectl set-hostname $FULL_DOMAIN
 echo "127.0.0.1 $FULL_DOMAIN" >> /etc/hosts
 
@@ -197,17 +218,21 @@ fi
 chown -R opendkim:opendkim /etc/opendkim
 
 # ====================================
-# POSTFIX - CORRIGIDO PARA AUTENTICAÇÃO
+# POSTFIX - CONFIGURAÇÃO COMPLETA
 # ====================================
 echo -e "${YELLOW}Configurando Postfix com SASL...${NC}"
 cat > /etc/postfix/main.cf << EOF
-# Identificação
+# ════════════════════════════════════════
+# IDENTIFICAÇÃO
+# ════════════════════════════════════════
 smtpd_banner = \$myhostname ESMTP
 smtp_address_preference = ipv4
 biff = no
 compatibility_level = 2
 
-# Domínios
+# ════════════════════════════════════════
+# DOMÍNIOS
+# ════════════════════════════════════════
 myhostname = $FULL_DOMAIN
 mydomain = $BASE_DOMAIN
 myorigin = /etc/mailname
@@ -221,10 +246,14 @@ inet_protocols = ipv4
 alias_maps = hash:/etc/aliases
 alias_database = hash:/etc/aliases
 
-# Restrições de relay - CRÍTICO PARA AUTENTICAÇÃO
+# ════════════════════════════════════════
+# RELAY E RESTRIÇÕES - CRÍTICO
+# ════════════════════════════════════════
 smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
 
-# TLS/SSL
+# ════════════════════════════════════════
+# TLS/SSL - MELHORADO
+# ════════════════════════════════════════
 smtpd_use_tls = yes
 smtpd_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem
 smtpd_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key
@@ -238,13 +267,17 @@ smtpd_tls_session_cache_timeout = 3600s
 smtp_tls_security_level = may
 smtp_tls_loglevel = 1
 
+# ════════════════════════════════════════
 # DKIM
+# ════════════════════════════════════════
 milter_protocol = 2
 milter_default_action = accept
 smtpd_milters = inet:localhost:8891
 non_smtpd_milters = inet:localhost:8891
 
-# SASL - AUTENTICAÇÃO CORRIGIDA
+# ════════════════════════════════════════
+# SASL - AUTENTICAÇÃO CRÍTICA
+# ════════════════════════════════════════
 smtpd_sasl_type = dovecot
 smtpd_sasl_path = private/auth
 smtpd_sasl_auth_enable = yes
@@ -252,41 +285,49 @@ smtpd_sasl_security_options = noanonymous
 smtpd_sasl_local_domain = \$myhostname
 broken_sasl_auth_clients = yes
 
-# Virtual domains
+# ════════════════════════════════════════
+# VIRTUAL DOMAINS
+# ════════════════════════════════════════
 virtual_transport = lmtp:unix:private/dovecot-lmtp
 virtual_mailbox_domains = $BASE_DOMAIN
 virtual_mailbox_maps = hash:/etc/postfix/vmailbox
 virtual_uid_maps = static:5000
 virtual_gid_maps = static:5000
 
-# Limites
+# ════════════════════════════════════════
+# LIMITES
+# ════════════════════════════════════════
 message_size_limit = 52428800
 mailbox_size_limit = 0
 
-# Segurança adicional
+# ════════════════════════════════════════
+# SEGURANÇA ADICIONAL
+# ════════════════════════════════════════
 smtpd_helo_required = yes
 smtpd_helo_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_invalid_helo_hostname, reject_non_fqdn_helo_hostname
 
-# Cliente restrições
 smtpd_client_restrictions = permit_mynetworks, permit_sasl_authenticated
 
-# Sender restrições
 smtpd_sender_restrictions = permit_mynetworks, permit_sasl_authenticated
 
-# Recipient restrições
 smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination, reject_invalid_recipient_domain, reject_non_fqdn_recipient
 EOF
 
 echo "$BASE_DOMAIN" > /etc/mailname
 
-# Master.cf - CORRIGIDO COM SUBMISSION
+# ====================================
+# POSTFIX MASTER.CF - PORTA 587
+# ====================================
+echo -e "${YELLOW}Configurando master.cf com porta 587...${NC}"
 cat > /etc/postfix/master.cf << 'EOFMASTER'
-# ==========================================================================
+# ════════════════════════════════════════════════════════════════════════════
 # service type  private unpriv  chroot  wakeup  maxproc command + args
-# ==========================================================================
+# ════════════════════════════════════════════════════════════════════════════
+
+# Porta 25 - SMTP padrão
 smtp      inet  n       -       y       -       -       smtpd
 
-# Submission (porta 587) - REQUER AUTENTICAÇÃO
+# Porta 587 - SUBMISSION (REQUER AUTENTICAÇÃO) - CRÍTICO
 submission inet n       -       y       -       -       smtpd
   -o syslog_name=postfix/submission
   -o smtpd_tls_security_level=encrypt
@@ -299,6 +340,7 @@ submission inet n       -       y       -       -       smtpd
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
   -o milter_macro_daemon_name=ORIGINATING
 
+# Serviços internos
 pickup    unix  n       -       y       60      1       pickup
 cleanup   unix  n       -       y       -       0       cleanup
 qmgr      unix  n       -       n       300     1       qmgr
@@ -325,34 +367,49 @@ scache    unix  -       -       y       -       1       scache
 EOFMASTER
 
 # ====================================
-# DOVECOT - AUTENTICAÇÃO CORRIGIDA
+# DOVECOT - COM CORREÇÃO IPv6
 # ====================================
-echo -e "${YELLOW}Configurando Dovecot com autenticação...${NC}"
+echo -e "${YELLOW}Configurando Dovecot (IPv4 apenas)...${NC}"
 groupadd -g 5000 vmail 2>/dev/null || true
 useradd -g vmail -u 5000 vmail -d /var/mail/vhosts -m 2>/dev/null || true
 
 cat > /etc/dovecot/dovecot.conf << EOFDOVE
-# Protocolos
+# ════════════════════════════════════════
+# CORREÇÃO IPv6 - CRÍTICO
+# ════════════════════════════════════════
+listen = *
+
+# ════════════════════════════════════════
+# PROTOCOLOS
+# ════════════════════════════════════════
 protocols = imap pop3 lmtp
 
-# Mail location
+# ════════════════════════════════════════
+# MAIL LOCATION
+# ════════════════════════════════════════
 mail_location = maildir:/var/mail/vhosts/%d/%n
 mail_privileged_group = mail
 first_valid_uid = 5000
 last_valid_uid = 5000
 
+# ════════════════════════════════════════
 # SSL/TLS
+# ════════════════════════════════════════
 ssl = yes
 ssl_cert = </etc/ssl/certs/ssl-cert-snakeoil.pem
 ssl_key = </etc/ssl/private/ssl-cert-snakeoil.key
 ssl_min_protocol = TLSv1.2
 
-# Autenticação - CRÍTICO
+# ════════════════════════════════════════
+# AUTENTICAÇÃO - CRÍTICO
+# ════════════════════════════════════════
 auth_mechanisms = plain login
 disable_plaintext_auth = no
 auth_username_format = %Ln
 
-# LMTP service - para entrega de email
+# ════════════════════════════════════════
+# LMTP SERVICE - ENTREGA DE EMAIL
+# ════════════════════════════════════════
 service lmtp {
   unix_listener /var/spool/postfix/private/dovecot-lmtp {
     mode = 0600
@@ -362,7 +419,9 @@ service lmtp {
   user = vmail
 }
 
-# Auth service - CRÍTICO PARA SMTP
+# ════════════════════════════════════════
+# AUTH SERVICE - CRÍTICO PARA SMTP
+# ════════════════════════════════════════
 service auth {
   # Socket para Postfix SMTP AUTH
   unix_listener /var/spool/postfix/private/auth {
@@ -380,19 +439,22 @@ service auth {
   user = dovecot
 }
 
-# Configuração de senha
+# ════════════════════════════════════════
+# PASSDB E USERDB
+# ════════════════════════════════════════
 passdb {
   driver = passwd-file
   args = scheme=PLAIN username_format=%u /etc/dovecot/users
 }
 
-# Configuração de usuário
 userdb {
   driver = static
   args = uid=vmail gid=vmail home=/var/mail/vhosts/%d/%n allow_all_users=yes
 }
 
-# Logging
+# ════════════════════════════════════════
+# LOGGING - PARA DEBUG
+# ════════════════════════════════════════
 log_path = /var/log/dovecot.log
 info_log_path = /var/log/dovecot-info.log
 debug_log_path = /var/log/dovecot-debug.log
@@ -400,7 +462,9 @@ auth_verbose = yes
 auth_debug = yes
 mail_debug = yes
 
-# Namespace
+# ════════════════════════════════════════
+# NAMESPACE
+# ════════════════════════════════════════
 namespace inbox {
   inbox = yes
   
@@ -426,7 +490,7 @@ namespace inbox {
 }
 EOFDOVE
 
-# Criar arquivo de log do Dovecot
+# Criar arquivos de log
 touch /var/log/dovecot.log /var/log/dovecot-info.log /var/log/dovecot-debug.log
 chown dovecot:dovecot /var/log/dovecot*.log
 
@@ -438,6 +502,7 @@ echo -e "${CYAN}     CRIANDO USUÁRIOS DE EMAIL${NC}"
 echo -e "${CYAN}════════════════════════════════════════${NC}\n"
 
 # Lista de usuários (usuario:senha)
+# EDITE AQUI PARA ADICIONAR/REMOVER USUÁRIOS
 USUARIOS=(
     "admin:dwwzyd"
     "vendas:senha123"
@@ -471,7 +536,7 @@ for usuario in "${USUARIOS[@]}"; do
     
     EMAIL="$USERNAME@$BASE_DOMAIN"
     
-    # Adicionar ao Dovecot - FORMATO CORRETO
+    # Adicionar ao Dovecot
     echo "$EMAIL:{PLAIN}$SENHA" >> /etc/dovecot/users
     
     # Criar diretório
@@ -497,51 +562,82 @@ postmap /etc/postfix/vmailbox
 echo -e "\n${GREEN}✅ Total de usuários criados: $CONTADOR${NC}\n"
 
 # ====================================
-# REINICIAR SERVIÇOS
+# REINICIAR SERVIÇOS NA ORDEM CORRETA
 # ====================================
 echo -e "${YELLOW}Iniciando serviços...${NC}"
 
-# Parar serviços primeiro
+# Parar todos primeiro
 systemctl stop opendkim postfix dovecot 2>/dev/null
 
 # Limpar sockets antigos
-rm -f /var/spool/postfix/private/auth
-rm -f /var/spool/postfix/private/dovecot-lmtp
+rm -f /var/spool/postfix/private/auth 2>/dev/null
+rm -f /var/spool/postfix/private/dovecot-lmtp 2>/dev/null
 
-# Iniciar serviços na ordem correta
+# Iniciar na ordem correta
+echo -e "${YELLOW}Iniciando OpenDKIM...${NC}"
 systemctl start opendkim
 sleep 2
+
+echo -e "${YELLOW}Iniciando Dovecot...${NC}"
 systemctl start dovecot
-sleep 2
+sleep 3
+
+echo -e "${YELLOW}Iniciando Postfix...${NC}"
 systemctl start postfix
+sleep 2
 
 # Habilitar no boot
 systemctl enable opendkim postfix dovecot 2>/dev/null
 
-# Verificar status
+# ====================================
+# VERIFICAR STATUS DOS SERVIÇOS
+# ====================================
 echo -e "\n${YELLOW}Verificando status dos serviços...${NC}"
+SERVICOS_OK=0
+
 for service in opendkim dovecot postfix; do
     if systemctl is-active --quiet $service; then
         echo -e "${GREEN}✓ $service está rodando${NC}"
+        SERVICOS_OK=$((SERVICOS_OK + 1))
     else
         echo -e "${RED}✗ $service NÃO está rodando${NC}"
-        systemctl status $service --no-pager -l
+        echo -e "${YELLOW}Tentando mais uma vez...${NC}"
+        systemctl restart $service
+        sleep 2
+        if systemctl is-active --quiet $service; then
+            echo -e "${GREEN}✓ $service iniciado!${NC}"
+            SERVICOS_OK=$((SERVICOS_OK + 1))
+        else
+            echo -e "${RED}✗ $service falhou!${NC}"
+            systemctl status $service --no-pager -l
+        fi
     fi
 done
 
 # Verificar socket de autenticação
 echo -e "\n${YELLOW}Verificando socket de autenticação...${NC}"
-if [ -S /var/spool/postfix/private/auth ]; then
-    echo -e "${GREEN}✓ Socket de autenticação criado${NC}"
-    ls -la /var/spool/postfix/private/auth
-else
-    echo -e "${RED}✗ Socket de autenticação NÃO encontrado${NC}"
+TENTATIVAS=0
+while [ $TENTATIVAS -lt 5 ]; do
+    if [ -S /var/spool/postfix/private/auth ]; then
+        echo -e "${GREEN}✓ Socket de autenticação criado!${NC}"
+        ls -la /var/spool/postfix/private/auth
+        break
+    else
+        echo -e "${YELLOW}Aguardando socket... (tentativa $((TENTATIVAS+1))/5)${NC}"
+        sleep 2
+        TENTATIVAS=$((TENTATIVAS + 1))
+    fi
+done
+
+if [ ! -S /var/spool/postfix/private/auth ]; then
+    echo -e "${RED}✗ AVISO: Socket não foi criado!${NC}"
+    echo -e "${YELLOW}Isso pode causar problemas de autenticação.${NC}"
 fi
 
 # ====================================
 # NGINX
 # ====================================
-echo -e "${YELLOW}Configurando Nginx...${NC}"
+echo -e "\n${YELLOW}Configurando Nginx...${NC}"
 
 cat > /etc/nginx/sites-available/$FULL_DOMAIN << EOFNGINX
 server {
@@ -559,14 +655,15 @@ rm -f /etc/nginx/sites-enabled/default
 if nginx -t 2>/dev/null; then
     systemctl restart nginx 2>/dev/null
     systemctl enable nginx 2>/dev/null
+    echo -e "${GREEN}✓ Nginx configurado${NC}"
 fi
 
 # ====================================
-# PÁGINA HTML COM CONFIGURAÇÕES DNS
+# PÁGINA HTML COM CONFIGURAÇÕES
 # ====================================
 DKIM_KEY=$(cat /etc/opendkim/keys/$BASE_DOMAIN/$SUBDOMAIN.txt | grep -oP '(?<=p=)[^"]+' | tr -d '\n\t\r ";' | sed 's/)//')
 
-echo -e "${YELLOW}Criando página de configurações DNS...${NC}"
+echo -e "\n${YELLOW}Criando página de configurações DNS...${NC}"
 
 # Gerar lista de usuários para HTML
 USERS_HTML=""
@@ -581,13 +678,13 @@ for usuario in "${USUARIOS[@]}"; do
                 </div>"
 done
 
-cat > /var/www/html/index.html << EOFHTML
+cat > /var/www/html/index.html << 'EOFHTML'
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Configuração SMTP - $BASE_DOMAIN</title>
+    <title>Configuração SMTP - DOMAIN_PLACEHOLDER</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -753,27 +850,27 @@ cat > /var/www/html/index.html << EOFHTML
     <div class="container">
         <div class="header">
             <h1>⚙️ Configuração SMTP Concluída</h1>
-            <p style="margin: 10px 0;"><strong>Domínio:</strong> $FULL_DOMAIN</p>
-            <div class="ip-display">🌐 IP do Servidor: $PUBLIC_IP</div>
-            <p style="margin-top: 10px;"><strong>Total de usuários criados:</strong> $CONTADOR</p>
-            <p style="margin-top: 5px; color: #666;"><small>🔐 DKIM: 1024 bits | Autenticação SASL: ✓</small></p>
+            <p style="margin: 10px 0;"><strong>Domínio:</strong> FULL_DOMAIN_PLACEHOLDER</p>
+            <div class="ip-display">🌐 IP do Servidor: PUBLIC_IP_PLACEHOLDER</div>
+            <p style="margin-top: 10px;"><strong>Total de usuários criados:</strong> CONTADOR_PLACEHOLDER</p>
+            <p style="margin-top: 5px; color: #666;"><small>🔐 DKIM: 1024 bits | Autenticação SASL: ✓ | IPv6: Desabilitado</small></p>
         </div>
 
         <div class="success-msg">
-            <strong>✅ Instalação concluída com autenticação SASL configurada!</strong>
-            <p style="margin-top: 8px;">Todos os serviços foram configurados. Configure os DNS e teste a autenticação.</p>
+            <strong>✅ Instalação concluída com autenticação SASL e correção IPv6!</strong>
+            <p style="margin-top: 8px;">Todos os serviços configurados. Configure os DNS e teste.</p>
         </div>
 
-        <!-- CONFIGURAÇÕES DE AUTENTICAÇÃO -->
+        <!-- CONFIGURAÇÃO DE AUTENTICAÇÃO -->
         <div class="auth-config">
             <h3>🔐 CONFIGURAÇÃO DE AUTENTICAÇÃO SMTP</h3>
             <p><strong>IMPORTANTE:</strong> Use estas configurações no seu cliente de email:</p>
             <ul style="margin-top: 15px; margin-left: 20px;">
-                <li><strong>Servidor SMTP:</strong> <code>$FULL_DOMAIN</code></li>
+                <li><strong>Servidor SMTP:</strong> <code>FULL_DOMAIN_PLACEHOLDER</code></li>
                 <li><strong>Porta:</strong> <code>587</code> (submission - RECOMENDADO) ou <code>25</code></li>
                 <li><strong>Tipo de segurança:</strong> STARTTLS (porta 587) ou Nenhum (porta 25)</li>
                 <li><strong>Requer autenticação:</strong> SIM ✓</li>
-                <li><strong>Nome de usuário:</strong> Email completo (ex: admin@$BASE_DOMAIN)</li>
+                <li><strong>Nome de usuário:</strong> Email completo (ex: admin@BASE_DOMAIN_PLACEHOLDER)</li>
                 <li><strong>Senha:</strong> A senha do usuário</li>
             </ul>
             <div class="port-info">
@@ -789,28 +886,27 @@ cat > /var/www/html/index.html << EOFHTML
             <strong>⚠️ IMPORTANTE - CONFIGURAÇÃO DNS:</strong>
             <ul>
                 <li><strong>Use <code>~all</code> no SPF</strong> (NÃO use <code>-all</code>)</li>
-                <li><strong>IP detectado:</strong> <code>$PUBLIC_IP</code> - Verifique se está correto!</li>
+                <li><strong>IP detectado:</strong> <code>PUBLIC_IP_PLACEHOLDER</code> - Verifique se está correto!</li>
                 <li>Configure TODOS os registros DNS abaixo</li>
-                <li>Aguarde de 1 a 6 horas para propagação DNS</li>
-                <li>Teste autenticação SMTP na porta 587 com STARTTLS</li>
-                <li>Verifique logs em: <code>/var/log/mail.log</code></li>
+                <li>Aguarde 1-6 horas para propagação DNS</li>
+                <li>Teste autenticação SMTP na porta 587</li>
             </ul>
         </div>
 
-        <!-- USUÁRIOS CRIADOS -->
+        <!-- USUÁRIOS -->
         <div class="dns-card">
-            <span class="dns-type">👥 USUÁRIOS DE EMAIL CRIADOS ($CONTADOR)</span>
-            <div class="info-grid">$USERS_HTML
+            <span class="dns-type">👥 USUÁRIOS DE EMAIL (CONTADOR_PLACEHOLDER)</span>
+            <div class="info-grid">USERS_HTML_PLACEHOLDER
             </div>
         </div>
 
-        <!-- CONFIGURAÇÕES DE SERVIDOR -->
+        <!-- SERVIDOR -->
         <div class="dns-card">
-            <span class="dns-type">📧 CONFIGURAÇÕES DO SERVIDOR DE EMAIL</span>
+            <span class="dns-type">📧 CONFIGURAÇÕES DO SERVIDOR</span>
             <div class="info-grid">
                 <div class="info-item">
                     <strong>Servidor SMTP (Envio)</strong>
-                    <span>$FULL_DOMAIN</span>
+                    <span>FULL_DOMAIN_PLACEHOLDER</span>
                 </div>
                 <div class="info-item">
                     <strong>Porta SMTP</strong>
@@ -821,42 +917,30 @@ cat > /var/www/html/index.html << EOFHTML
                     <span>✓ Obrigatória</span>
                 </div>
                 <div class="info-item">
-                    <strong>Servidor IMAP (Recebimento)</strong>
-                    <span>$FULL_DOMAIN</span>
+                    <strong>Servidor IMAP</strong>
+                    <span>FULL_DOMAIN_PLACEHOLDER</span>
                 </div>
                 <div class="info-item">
                     <strong>Porta IMAP</strong>
                     <span>143</span>
-                </div>
-                <div class="info-item">
-                    <strong>Servidor POP3</strong>
-                    <span>$FULL_DOMAIN</span>
-                </div>
-                <div class="info-item">
-                    <strong>Porta POP3</strong>
-                    <span>110</span>
                 </div>
             </div>
         </div>
 
         <!-- REGISTRO A -->
         <div class="dns-card">
-            <span class="dns-type">🔵 Registro A (Configure primeiro!)</span>
+            <span class="dns-type">🔵 Registro A</span>
             <div class="dns-field">
                 <strong>Tipo:</strong>
                 <div class="dns-value" onclick="copyToClipboard(this, 'A')">A</div>
             </div>
             <div class="dns-field">
                 <strong>Nome/Host:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, '$SUBDOMAIN')">$SUBDOMAIN</div>
+                <div class="dns-value" onclick="copyToClipboard(this, 'SUBDOMAIN_PLACEHOLDER')">SUBDOMAIN_PLACEHOLDER</div>
             </div>
             <div class="dns-field">
-                <strong>Aponta para (IP):</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, '$PUBLIC_IP')">$PUBLIC_IP</div>
-            </div>
-            <div class="dns-field">
-                <strong>TTL:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, '3600')">3600</div>
+                <strong>IP:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, 'PUBLIC_IP_PLACEHOLDER')">PUBLIC_IP_PLACEHOLDER</div>
             </div>
         </div>
 
@@ -868,12 +952,12 @@ cat > /var/www/html/index.html << EOFHTML
                 <div class="dns-value" onclick="copyToClipboard(this, 'MX')">MX</div>
             </div>
             <div class="dns-field">
-                <strong>Nome/Host:</strong>
+                <strong>Nome:</strong>
                 <div class="dns-value" onclick="copyToClipboard(this, '@')">@</div>
             </div>
             <div class="dns-field">
-                <strong>Aponta para:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, '$FULL_DOMAIN')">$FULL_DOMAIN</div>
+                <strong>Servidor:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, 'FULL_DOMAIN_PLACEHOLDER')">FULL_DOMAIN_PLACEHOLDER</div>
             </div>
             <div class="dns-field">
                 <strong>Prioridade:</strong>
@@ -889,12 +973,12 @@ cat > /var/www/html/index.html << EOFHTML
                 <div class="dns-value" onclick="copyToClipboard(this, 'TXT')">TXT</div>
             </div>
             <div class="dns-field">
-                <strong>Nome/Host:</strong>
+                <strong>Nome:</strong>
                 <div class="dns-value" onclick="copyToClipboard(this, '@')">@</div>
             </div>
             <div class="dns-field">
                 <strong>Valor:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'v=spf1 ip4:$PUBLIC_IP a:$FULL_DOMAIN ~all')">v=spf1 ip4:$PUBLIC_IP a:$FULL_DOMAIN ~all</div>
+                <div class="dns-value" onclick="copyToClipboard(this, 'SPF_VALUE_PLACEHOLDER')">SPF_VALUE_PLACEHOLDER</div>
             </div>
         </div>
 
@@ -906,12 +990,12 @@ cat > /var/www/html/index.html << EOFHTML
                 <div class="dns-value" onclick="copyToClipboard(this, 'TXT')">TXT</div>
             </div>
             <div class="dns-field">
-                <strong>Nome/Host:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, '$SUBDOMAIN._domainkey')">$SUBDOMAIN._domainkey</div>
+                <strong>Nome:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, 'DKIM_NAME_PLACEHOLDER')">DKIM_NAME_PLACEHOLDER</div>
             </div>
             <div class="dns-field">
                 <strong>Valor:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'v=DKIM1; k=rsa; p=$DKIM_KEY')">v=DKIM1; k=rsa; p=$DKIM_KEY</div>
+                <div class="dns-value" onclick="copyToClipboard(this, 'DKIM_VALUE_PLACEHOLDER')">DKIM_VALUE_PLACEHOLDER</div>
             </div>
         </div>
 
@@ -923,35 +1007,13 @@ cat > /var/www/html/index.html << EOFHTML
                 <div class="dns-value" onclick="copyToClipboard(this, 'TXT')">TXT</div>
             </div>
             <div class="dns-field">
-                <strong>Nome/Host:</strong>
+                <strong>Nome:</strong>
                 <div class="dns-value" onclick="copyToClipboard(this, '_dmarc')">_dmarc</div>
             </div>
             <div class="dns-field">
                 <strong>Valor:</strong>
-                <div class="dns-value" onclick="copyToClipboard(this, 'v=DMARC1; p=quarantine; rua=mailto:admin@$BASE_DOMAIN; aspf=r; adkim=r')">v=DMARC1; p=quarantine; rua=mailto:admin@$BASE_DOMAIN; aspf=r; adkim=r</div>
+                <div class="dns-value" onclick="copyToClipboard(this, 'DMARC_VALUE_PLACEHOLDER')">DMARC_VALUE_PLACEHOLDER</div>
             </div>
-        </div>
-
-        <!-- TESTES -->
-        <div class="dns-card" style="background: #fff3e0; border-left: 4px solid #ff9800;">
-            <h2 style="color: #e65100; margin-bottom: 15px;">🧪 TESTE SUA CONFIGURAÇÃO</h2>
-            <p style="margin-bottom: 15px;"><strong>Comandos para testar autenticação SMTP:</strong></p>
-            <div style="background: #263238; color: #aed581; padding: 15px; border-radius: 8px; font-family: monospace; margin-bottom: 15px;">
-# Teste de conexão SMTP<br>
-telnet $FULL_DOMAIN 25<br>
-<br>
-# Teste autenticação na porta 587<br>
-openssl s_client -connect $FULL_DOMAIN:587 -starttls smtp<br>
-<br>
-# Ver logs em tempo real<br>
-tail -f /var/log/mail.log
-            </div>
-            <p><strong>Sites para teste:</strong></p>
-            <ul style="margin-left: 20px; margin-top: 10px;">
-                <li><a href="https://www.mail-tester.com" target="_blank">Mail Tester</a> - Teste completo de email</li>
-                <li><a href="https://mxtoolbox.com" target="_blank">MX Toolbox</a> - Verificar DNS e SPF/DKIM</li>
-                <li><a href="https://dnschecker.org" target="_blank">DNS Checker</a> - Verificar propagação DNS</li>
-            </ul>
         </div>
 
     </div>
@@ -976,8 +1038,6 @@ tail -f /var/log/mail.log
                     element.style.color = '';
                     notification.style.display = 'none';
                 }, 1500);
-            }).catch(err => {
-                alert('Erro ao copiar.');
             });
         }
     </script>
@@ -985,34 +1045,18 @@ tail -f /var/log/mail.log
 </html>
 EOFHTML
 
-# ====================================
-# TESTE DE AUTENTICAÇÃO
-# ====================================
-echo -e "\n${CYAN}════════════════════════════════════════${NC}"
-echo -e "${CYAN}     TESTE DE AUTENTICAÇÃO SMTP         ${NC}"
-echo -e "${CYAN}════════════════════════════════════════${NC}\n"
-
-# Pegar primeiro usuário para teste
-TEST_USER=$(echo "${USUARIOS[0]}" | cut -d':' -f1)
-TEST_PASS=$(echo "${USUARIOS[0]}" | cut -d':' -f2)
-TEST_EMAIL="$TEST_USER@$BASE_DOMAIN"
-
-echo -e "${YELLOW}Testando autenticação para: $TEST_EMAIL${NC}\n"
-
-# Verificar se o usuário existe no arquivo
-if grep -q "$TEST_EMAIL" /etc/dovecot/users; then
-    echo -e "${GREEN}✓ Usuário encontrado em /etc/dovecot/users${NC}"
-else
-    echo -e "${RED}✗ Usuário NÃO encontrado em /etc/dovecot/users${NC}"
-fi
-
-# Verificar socket
-if [ -S /var/spool/postfix/private/auth ]; then
-    echo -e "${GREEN}✓ Socket de autenticação existe${NC}"
-    ls -la /var/spool/postfix/private/auth
-else
-    echo -e "${RED}✗ Socket de autenticação NÃO existe${NC}"
-fi
+# Substituir placeholders
+sed -i "s|DOMAIN_PLACEHOLDER|$BASE_DOMAIN|g" /var/www/html/index.html
+sed -i "s|FULL_DOMAIN_PLACEHOLDER|$FULL_DOMAIN|g" /var/www/html/index.html
+sed -i "s|BASE_DOMAIN_PLACEHOLDER|$BASE_DOMAIN|g" /var/www/html/index.html
+sed -i "s|PUBLIC_IP_PLACEHOLDER|$PUBLIC_IP|g" /var/www/html/index.html
+sed -i "s|SUBDOMAIN_PLACEHOLDER|$SUBDOMAIN|g" /var/www/html/index.html
+sed -i "s|CONTADOR_PLACEHOLDER|$CONTADOR|g" /var/www/html/index.html
+sed -i "s|USERS_HTML_PLACEHOLDER|$USERS_HTML|g" /var/www/html/index.html
+sed -i "s|SPF_VALUE_PLACEHOLDER|v=spf1 ip4:$PUBLIC_IP a:$FULL_DOMAIN ~all|g" /var/www/html/index.html
+sed -i "s|DKIM_NAME_PLACEHOLDER|$SUBDOMAIN._domainkey|g" /var/www/html/index.html
+sed -i "s|DKIM_VALUE_PLACEHOLDER|v=DKIM1; k=rsa; p=$DKIM_KEY|g" /var/www/html/index.html
+sed -i "s|DMARC_VALUE_PLACEHOLDER|v=DMARC1; p=quarantine; rua=mailto:admin@$BASE_DOMAIN; aspf=r; adkim=r|g" /var/www/html/index.html
 
 # ====================================
 # RESUMO FINAL
@@ -1023,29 +1067,27 @@ echo -e "${GREEN}╠════════════════════
 echo -e "${GREEN}║ Domínio: ${YELLOW}$FULL_DOMAIN${NC}"
 echo -e "${GREEN}║ IP: ${YELLOW}$PUBLIC_IP${NC}"
 echo -e "${GREEN}║ Usuários: ${YELLOW}$CONTADOR${NC}"
-echo -e "${GREEN}║ Autenticação SASL: ${YELLOW}✓ Configurada${NC}"
+echo -e "${GREEN}║ Serviços OK: ${YELLOW}$SERVICOS_OK/3${NC}"
 echo -e "${GREEN}╠════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║ 🌐 Acesse: ${CYAN}http://$PUBLIC_IP${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════╝${NC}\n"
 
-echo -e "${CYAN}📧 CONFIGURAÇÃO DO CLIENTE DE EMAIL:${NC}"
-echo -e "  ${GREEN}Servidor SMTP:${NC} $FULL_DOMAIN"
-echo -e "  ${GREEN}Porta:${NC} 587 (recomendado) ou 25"
-echo -e "  ${GREEN}Segurança:${NC} STARTTLS (porta 587)"
-echo -e "  ${GREEN}Autenticação:${NC} SIM (obrigatória)"
-echo -e "  ${GREEN}Usuário:${NC} email completo (ex: admin@$BASE_DOMAIN)"
+echo -e "${CYAN}📧 CONFIGURAÇÃO DO CLIENTE:${NC}"
+echo -e "  ${GREEN}Servidor:${NC} $FULL_DOMAIN"
+echo -e "  ${GREEN}Porta:${NC} 587 (STARTTLS recomendado)"
+echo -e "  ${GREEN}Autenticação:${NC} Obrigatória"
+echo -e "  ${GREEN}Usuário:${NC} email@$BASE_DOMAIN"
 echo -e "  ${GREEN}Senha:${NC} a senha do usuário\n"
 
 echo -e "${YELLOW}⚙️ COMANDOS ÚTEIS:${NC}"
 echo -e "  Ver logs: ${CYAN}tail -f /var/log/mail.log${NC}"
 echo -e "  Status: ${CYAN}systemctl status postfix dovecot${NC}"
-echo -e "  Testar SMTP: ${CYAN}telnet $FULL_DOMAIN 25${NC}"
-echo -e "  Recarregar: ${CYAN}systemctl reload postfix dovecot${NC}\n"
+echo -e "  Testar: ${CYAN}telnet $FULL_DOMAIN 587${NC}\n"
 
 # Salvar resumo
-cat > /root/smtp-auth-summary.txt << EOFSUMMARY
+cat > /root/smtp-config.txt << EOFSUMMARY
 ════════════════════════════════════════════════════════
-        CONFIGURAÇÃO SMTP COM AUTENTICAÇÃO
+        CONFIGURAÇÃO SMTP COMPLETA
 ════════════════════════════════════════════════════════
 
 Data: $(date)
@@ -1055,38 +1097,21 @@ Usuários: $CONTADOR
 
 CONFIGURAÇÃO DO CLIENTE:
 - Servidor SMTP: $FULL_DOMAIN
-- Porta: 587 (STARTTLS recomendado) ou 25
+- Porta: 587 (STARTTLS) ou 25
 - Autenticação: Obrigatória
-- Usuário: email completo (ex: admin@$BASE_DOMAIN)
-- Senha: a senha do usuário
+- Usuário: email completo
+- Senha: senha do usuário
 
-USUÁRIOS CRIADOS:
+USUÁRIOS:
 EOFSUMMARY
 
 for usuario in "${USUARIOS[@]}"; do
     USERNAME=$(echo "$usuario" | cut -d':' -f1)
     SENHA=$(echo "$usuario" | cut -d':' -f2)
-    echo "$USERNAME@$BASE_DOMAIN : $SENHA" >> /root/smtp-auth-summary.txt
+    echo "$USERNAME@$BASE_DOMAIN : $SENHA" >> /root/smtp-config.txt
 done
 
-cat >> /root/smtp-auth-summary.txt << EOFSUMMARY2
-
-COMANDOS ÚTEIS:
-- Ver logs: tail -f /var/log/mail.log
-- Status: systemctl status postfix dovecot
-- Testar SMTP: telnet $FULL_DOMAIN 25
-- Recarregar: systemctl reload postfix dovecot
-
-ARQUIVOS IMPORTANTES:
-- Configuração Postfix: /etc/postfix/main.cf
-- Configuração Dovecot: /etc/dovecot/dovecot.conf
-- Usuários: /etc/dovecot/users
-- Logs: /var/log/mail.log
-
-════════════════════════════════════════════════════════
-EOFSUMMARY2
-
-echo -e "${GREEN}✓ Resumo salvo em: ${CYAN}/root/smtp-auth-summary.txt${NC}\n"
+echo -e "\n${GREEN}✓ Resumo salvo: ${CYAN}/root/smtp-config.txt${NC}\n"
 
 # Limpar
 rm -f /usr/sbin/policy-rc.d
@@ -1096,7 +1121,9 @@ export DEBIAN_FRONTEND=dialog
 echo -e "${GREEN}╔════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║         🎉 INSTALAÇÃO FINALIZADA!          ║${NC}"
 echo -e "${GREEN}║                                            ║${NC}"
-echo -e "${GREEN}║  Configure os DNS e teste a autenticação  ║${NC}"
+echo -e "${GREEN}║  1. Configure os registros DNS             ║${NC}"
+echo -e "${GREEN}║  2. Aguarde propagação (1-6h)              ║${NC}"
+echo -e "${GREEN}║  3. Teste a autenticação                   ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════╝${NC}\n"
 
 exit 0
