@@ -36,16 +36,65 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo -e "${GREEN}╔════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║   INSTALADOR SMTP - MULTI-USUÁRIO v3.0   ║${NC}"
+echo -e "${GREEN}║   INSTALADOR SMTP - MULTI-USUÁRIO v3.1   ║${NC}"
+echo -e "${GREEN}║        DKIM 1024 bits compatível          ║${NC}"
 echo -e "${GREEN}╠════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║ Domínio: ${YELLOW}$FULL_DOMAIN${NC}"
 echo -e "${GREEN}║ Subdomínio: ${YELLOW}$SUBDOMAIN${NC}"
 echo -e "${GREEN}║ Base: ${YELLOW}$BASE_DOMAIN${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════╝${NC}\n"
 
+sleep 2
+
+# ====================================
+# DETECTAR IP PÚBLICO (MELHORADO)
+# ====================================
+echo -e "${YELLOW}Detectando IP público...${NC}"
+
+# Tentar múltiplos serviços para detectar o IP
+PUBLIC_IP=""
+IP_SERVICES=(
+    "ifconfig.me"
+    "icanhazip.com"
+    "ipecho.net/plain"
+    "checkip.amazonaws.com"
+    "api.ipify.org"
+    "ipinfo.io/ip"
+)
+
+for service in "${IP_SERVICES[@]}"; do
+    IP=$(curl -s --connect-timeout 5 "$service" 2>/dev/null | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}')
+    if [ ! -z "$IP" ]; then
+        PUBLIC_IP="$IP"
+        echo -e "${GREEN}✓ IP detectado: $PUBLIC_IP (via $service)${NC}"
+        break
+    fi
+done
+
+# Se não conseguiu detectar, tentar pelo hostname -I
+if [ -z "$PUBLIC_IP" ]; then
+    PUBLIC_IP=$(hostname -I | awk '{print $1}')
+    echo -e "${YELLOW}⚠ IP detectado via hostname: $PUBLIC_IP${NC}"
+fi
+
+# Validar formato do IP
+if [[ ! $PUBLIC_IP =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    echo -e "${RED}✗ ERRO: Não foi possível detectar um IP válido!${NC}"
+    echo -e "${YELLOW}Por favor, insira o IP público manualmente:${NC}"
+    read -p "IP: " PUBLIC_IP
+    
+    # Validar novamente
+    if [[ ! $PUBLIC_IP =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        echo -e "${RED}IP inválido! Abortando...${NC}"
+        exit 1
+    fi
+fi
+
+echo -e "${GREEN}✓ IP confirmado: $PUBLIC_IP${NC}\n"
 sleep 2
 
 # Função wait_for_apt
@@ -117,9 +166,9 @@ hostnamectl set-hostname $FULL_DOMAIN
 echo "127.0.0.1 $FULL_DOMAIN" >> /etc/hosts
 
 # ====================================
-# OPENDKIM - 2048 BITS
+# OPENDKIM - 1024 BITS
 # ====================================
-echo -e "${YELLOW}Gerando chave DKIM 2048 bits...${NC}"
+echo -e "${YELLOW}Gerando chave DKIM 1024 bits...${NC}"
 cat > /etc/opendkim.conf << EOF
 Domain                  $BASE_DOMAIN
 KeyFile                 /etc/opendkim/keys/$BASE_DOMAIN/$SUBDOMAIN.private
@@ -136,15 +185,15 @@ chown -R opendkim:opendkim /var/run/opendkim /var/log/opendkim 2>/dev/null || tr
 
 cd /etc/opendkim/keys/$BASE_DOMAIN
 rm -f $SUBDOMAIN.private $SUBDOMAIN.txt
-opendkim-genkey -b 2048 -s $SUBDOMAIN -d $BASE_DOMAIN 2>/dev/null || opendkim-genkey -b 2048 -s $SUBDOMAIN -d $BASE_DOMAIN
+opendkim-genkey -b 1024 -s $SUBDOMAIN -d $BASE_DOMAIN 2>/dev/null || opendkim-genkey -b 1024 -s $SUBDOMAIN -d $BASE_DOMAIN
 
 if [ -f $SUBDOMAIN.private ]; then
-    echo -e "${GREEN}✓ Chave DKIM 2048 bits gerada!${NC}"
+    echo -e "${GREEN}✓ Chave DKIM 1024 bits gerada!${NC}"
     chown opendkim:opendkim $SUBDOMAIN.private
     chmod 600 $SUBDOMAIN.private
 else
     echo -e "${RED}✗ Erro! Usando método alternativo...${NC}"
-    openssl genrsa -out $SUBDOMAIN.private 2048
+    openssl genrsa -out $SUBDOMAIN.private 1024
     chown opendkim:opendkim $SUBDOMAIN.private
     chmod 600 $SUBDOMAIN.private
 fi
@@ -273,7 +322,7 @@ userdb {
 EOFDOVE
 
 # ====================================
-# CRIAR MÚLTIPLOS USUÁRIOS - SOLUÇÃO 1
+# CRIAR MÚLTIPLOS USUÁRIOS
 # ====================================
 echo -e "${CYAN}════════════════════════════════════════${NC}"
 echo -e "${CYAN}     CRIANDO USUÁRIOS DE EMAIL${NC}"
@@ -351,7 +400,6 @@ systemctl enable opendkim postfix dovecot 2>/dev/null
 # NGINX
 # ====================================
 echo -e "${YELLOW}Configurando Nginx...${NC}"
-PUBLIC_IP=$(curl -s ifconfig.me || curl -s icanhazip.com || echo "SEU_IP")
 
 cat > /etc/nginx/sites-available/$FULL_DOMAIN << EOFNGINX
 server {
@@ -372,11 +420,11 @@ if nginx -t 2>/dev/null; then
 fi
 
 # ====================================
-# PÁGINA HTML COM LISTA DE USUÁRIOS
+# PÁGINA HTML COM CONFIGURAÇÕES DNS
 # ====================================
 DKIM_KEY=$(cat /etc/opendkim/keys/$BASE_DOMAIN/$SUBDOMAIN.txt | grep -oP '(?<=p=)[^"]+' | tr -d '\n\t\r ";' | sed 's/)//')
 
-echo -e "${YELLOW}Criando página DNS...${NC}"
+echo -e "${YELLOW}Criando página de configurações DNS...${NC}"
 
 # Gerar lista de usuários para HTML
 USERS_HTML=""
@@ -416,6 +464,16 @@ cat > /var/www/html/index.html << EOFHTML
             text-align: center;
         }
         .header h1 { color: #667eea; font-size: 2rem; margin-bottom: 10px; }
+        .ip-display {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 25px;
+            border-radius: 10px;
+            font-size: 1.3rem;
+            font-weight: bold;
+            margin: 15px 0;
+            display: inline-block;
+        }
         .dns-card {
             background: white;
             border-radius: 15px;
@@ -426,23 +484,51 @@ cat > /var/www/html/index.html << EOFHTML
         .dns-type {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 5px 15px;
+            padding: 8px 20px;
             border-radius: 20px;
             font-weight: bold;
             display: inline-block;
             margin-bottom: 15px;
+            font-size: 1.1rem;
+        }
+        .dns-field {
+            margin: 12px 0;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .dns-field strong {
+            color: #667eea;
+            display: block;
+            margin-bottom: 8px;
+            font-size: 0.95rem;
         }
         .dns-value {
-            background: #f5f5f5;
-            padding: 8px 15px;
+            background: #ffffff;
+            border: 2px solid #667eea;
+            padding: 12px 15px;
             border-radius: 8px;
-            font-family: monospace;
+            font-family: 'Courier New', monospace;
             font-size: 14px;
             word-break: break-all;
             cursor: pointer;
-            margin: 5px 0;
+            transition: all 0.3s;
+            position: relative;
         }
-        .dns-value:hover { background: #e8e8e8; }
+        .dns-value:hover {
+            background: #f0f0f0;
+            border-color: #764ba2;
+        }
+        .dns-value::after {
+            content: '📋 Clique para copiar';
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 11px;
+            color: #999;
+            font-family: 'Segoe UI', sans-serif;
+        }
         .info-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -452,6 +538,7 @@ cat > /var/www/html/index.html << EOFHTML
             padding: 15px;
             background: #f9f9f9;
             border-radius: 10px;
+            border-left: 4px solid #667eea;
         }
         .info-item strong {
             color: #667eea;
@@ -461,92 +548,264 @@ cat > /var/www/html/index.html << EOFHTML
         .warning {
             background: #fff3cd;
             border-left: 4px solid #ffc107;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        .warning ul {
+            margin-left: 20px;
+            margin-top: 10px;
+        }
+        .warning li {
+            margin: 8px 0;
+        }
+        .success-msg {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
             padding: 15px;
             margin-bottom: 20px;
             border-radius: 8px;
+            color: #155724;
+        }
+        .copy-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #28a745;
+            color: white;
+            padding: 15px 25px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            display: none;
+            z-index: 1000;
+        }
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
         }
     </style>
 </head>
 <body>
+    <div id="copyNotification" class="copy-notification">✓ Copiado!</div>
+    
     <div class="container">
         <div class="header">
-            <h1>⚙️ Configuração SMTP</h1>
-            <p><strong>Domínio:</strong> $FULL_DOMAIN</p>
-            <p><strong>IP:</strong> $PUBLIC_IP</p>
-            <p><strong>Total de usuários:</strong> $CONTADOR</p>
+            <h1>⚙️ Configuração SMTP Concluída</h1>
+            <p style="margin: 10px 0;"><strong>Domínio:</strong> $FULL_DOMAIN</p>
+            <div class="ip-display">🌐 IP do Servidor: $PUBLIC_IP</div>
+            <p style="margin-top: 10px;"><strong>Total de usuários criados:</strong> $CONTADOR</p>
+            <p style="margin-top: 5px; color: #666;"><small>🔐 DKIM: 1024 bits (compatível)</small></p>
+        </div>
+
+        <div class="success-msg">
+            <strong>✅ Instalação concluída com sucesso!</strong>
+            <p style="margin-top: 8px;">Todos os serviços foram configurados. Agora configure os registros DNS abaixo.</p>
         </div>
 
         <div class="warning">
-            <strong>⚠️ IMPORTANTE:</strong>
-            <ul style="margin-left: 20px; margin-top: 10px;">
-                <li>Use <code>~all</code> no SPF (NÃO use <code>-all</code>)</li>
-                <li>Aguarde 1-6 horas para propagação DNS</li>
-                <li>Teste em <a href="https://www.mail-tester.com" target="_blank">mail-tester.com</a></li>
+            <strong>⚠️ IMPORTANTE - CONFIGURAÇÃO DNS:</strong>
+            <ul>
+                <li><strong>Use <code>~all</code> no SPF</strong> (NÃO use <code>-all</code> - isso pode bloquear emails)</li>
+                <li><strong>IP detectado:</strong> <code>$PUBLIC_IP</code> - Verifique se está correto!</li>
+                <li><strong>DKIM 1024 bits:</strong> Chave compatível com a maioria dos provedores DNS</li>
+                <li>Configure TODOS os registros DNS abaixo no painel do seu domínio</li>
+                <li>Aguarde de 1 a 6 horas para propagação DNS completa</li>
+                <li>Teste seus emails em: <a href="https://www.mail-tester.com" target="_blank" style="color: #007bff;">mail-tester.com</a></li>
+                <li>Verifique SPF/DKIM em: <a href="https://mxtoolbox.com" target="_blank" style="color: #007bff;">mxtoolbox.com</a></li>
             </ul>
         </div>
 
         <!-- USUÁRIOS CRIADOS -->
         <div class="dns-card">
-            <span class="dns-type">👥 USUÁRIOS CRIADOS</span>
+            <span class="dns-type">👥 USUÁRIOS DE EMAIL CRIADOS ($CONTADOR)</span>
             <div class="info-grid">$USERS_HTML
+            </div>
+        </div>
+
+        <!-- CONFIGURAÇÕES DE SERVIDOR -->
+        <div class="dns-card">
+            <span class="dns-type">📧 CONFIGURAÇÕES DO SERVIDOR DE EMAIL</span>
+            <div class="info-grid">
+                <div class="info-item">
+                    <strong>Servidor SMTP</strong>
+                    <span>$FULL_DOMAIN</span>
+                </div>
+                <div class="info-item">
+                    <strong>Porta SMTP</strong>
+                    <span>25 ou 587 (submission)</span>
+                </div>
+                <div class="info-item">
+                    <strong>Servidor IMAP</strong>
+                    <span>$FULL_DOMAIN</span>
+                </div>
+                <div class="info-item">
+                    <strong>Porta IMAP</strong>
+                    <span>143</span>
+                </div>
+                <div class="info-item">
+                    <strong>Servidor POP3</strong>
+                    <span>$FULL_DOMAIN</span>
+                </div>
+                <div class="info-item">
+                    <strong>Porta POP3</strong>
+                    <span>110</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- REGISTRO A -->
+        <div class="dns-card">
+            <span class="dns-type">🔵 Registro A (Obrigatório - Configure primeiro!)</span>
+            <div class="dns-field">
+                <strong>Tipo de Registro:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, 'A')">A</div>
+            </div>
+            <div class="dns-field">
+                <strong>Nome/Host:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, '$SUBDOMAIN')">$SUBDOMAIN</div>
+            </div>
+            <div class="dns-field">
+                <strong>Aponta para (IP):</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, '$PUBLIC_IP')">$PUBLIC_IP</div>
+            </div>
+            <div class="dns-field">
+                <strong>TTL:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, '3600')">3600</div>
+            </div>
+        </div>
+
+        <!-- REGISTRO MX -->
+        <div class="dns-card">
+            <span class="dns-type">📨 Registro MX (Obrigatório)</span>
+            <div class="dns-field">
+                <strong>Tipo de Registro:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, 'MX')">MX</div>
+            </div>
+            <div class="dns-field">
+                <strong>Nome/Host:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, '@')">@</div>
+            </div>
+            <div class="dns-field">
+                <strong>Aponta para (Mail Server):</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, '$FULL_DOMAIN')">$FULL_DOMAIN</div>
+            </div>
+            <div class="dns-field">
+                <strong>Prioridade:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, '10')">10</div>
+            </div>
+            <div class="dns-field">
+                <strong>TTL:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, '3600')">3600</div>
             </div>
         </div>
 
         <!-- SPF -->
         <div class="dns-card">
-            <span class="dns-type">SPF (CRÍTICO!)</span>
-            <p><strong>Tipo:</strong> TXT</p>
-            <p><strong>Nome:</strong> @</p>
-            <p><strong>Valor:</strong></p>
-            <div class="dns-value" onclick="copyToClipboard(this)">v=spf1 ip4:$PUBLIC_IP a:$FULL_DOMAIN ~all</div>
-            <p style="margin-top:10px;color:#666;"><small>⚠️ Use ~all (NÃO -all!)</small></p>
+            <span class="dns-type">🔒 SPF (CRÍTICO - Evita spam!)</span>
+            <div class="dns-field">
+                <strong>Tipo de Registro:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, 'TXT')">TXT</div>
+            </div>
+            <div class="dns-field">
+                <strong>Nome/Host:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, '@')">@</div>
+            </div>
+            <div class="dns-field">
+                <strong>Valor/Conteúdo:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, 'v=spf1 ip4:$PUBLIC_IP a:$FULL_DOMAIN ~all')">v=spf1 ip4:$PUBLIC_IP a:$FULL_DOMAIN ~all</div>
+            </div>
+            <div class="dns-field">
+                <strong>TTL:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, '3600')">3600</div>
+            </div>
+            <p style="margin-top:15px;color:#dc3545;font-weight:bold;">⚠️ IMPORTANTE: Use ~all (NÃO use -all!)</p>
         </div>
 
         <!-- DKIM -->
         <div class="dns-card">
-            <span class="dns-type">DKIM (CRÍTICO!)</span>
-            <p><strong>Tipo:</strong> TXT</p>
-            <p><strong>Nome:</strong> $SUBDOMAIN._domainkey</p>
-            <p><strong>Valor:</strong></p>
-            <div class="dns-value" onclick="copyToClipboard(this)">v=DKIM1; k=rsa; p=$DKIM_KEY</div>
-            <p style="margin-top:10px;color:#666;"><small>🔐 Chave RSA 2048 bits</small></p>
+            <span class="dns-type">🔐 DKIM (CRÍTICO - Autenticação de email)</span>
+            <div class="dns-field">
+                <strong>Tipo de Registro:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, 'TXT')">TXT</div>
+            </div>
+            <div class="dns-field">
+                <strong>Nome/Host:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, '$SUBDOMAIN._domainkey')">$SUBDOMAIN._domainkey</div>
+            </div>
+            <div class="dns-field">
+                <strong>Valor/Conteúdo (Chave RSA 1024 bits):</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, 'v=DKIM1; k=rsa; p=$DKIM_KEY')">v=DKIM1; k=rsa; p=$DKIM_KEY</div>
+            </div>
+            <div class="dns-field">
+                <strong>TTL:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, '3600')">3600</div>
+            </div>
+            <p style="margin-top:15px;color:#28a745;">✓ Chave DKIM gerada com 1024 bits (compatível com a maioria dos provedores)</p>
         </div>
 
         <!-- DMARC -->
         <div class="dns-card">
-            <span class="dns-type">DMARC</span>
-            <p><strong>Tipo:</strong> TXT</p>
-            <p><strong>Nome:</strong> _dmarc</p>
-            <p><strong>Valor:</strong></p>
-            <div class="dns-value" onclick="copyToClipboard(this)">v=DMARC1; p=quarantine; rua=mailto:admin@$BASE_DOMAIN; aspf=r; adkim=r</div>
+            <span class="dns-type">📋 DMARC (Recomendado)</span>
+            <div class="dns-field">
+                <strong>Tipo de Registro:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, 'TXT')">TXT</div>
+            </div>
+            <div class="dns-field">
+                <strong>Nome/Host:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, '_dmarc')">_dmarc</div>
+            </div>
+            <div class="dns-field">
+                <strong>Valor/Conteúdo:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, 'v=DMARC1; p=quarantine; rua=mailto:admin@$BASE_DOMAIN; aspf=r; adkim=r')">v=DMARC1; p=quarantine; rua=mailto:admin@$BASE_DOMAIN; aspf=r; adkim=r</div>
+            </div>
+            <div class="dns-field">
+                <strong>TTL:</strong>
+                <div class="dns-value" onclick="copyToClipboard(this, '3600')">3600</div>
+            </div>
         </div>
 
-        <!-- MX -->
-        <div class="dns-card">
-            <span class="dns-type">MX (Obrigatório)</span>
-            <p><strong>Tipo:</strong> MX</p>
-            <p><strong>Nome:</strong> @</p>
-            <p><strong>Servidor:</strong> $FULL_DOMAIN</p>
-            <p><strong>Prioridade:</strong> 10</p>
-        </div>
-
-        <!-- Registro A -->
-        <div class="dns-card">
-            <span class="dns-type">Registro A</span>
-            <p><strong>Tipo:</strong> A</p>
-            <p><strong>Nome:</strong> $SUBDOMAIN</p>
-            <p><strong>IP:</strong> $PUBLIC_IP</p>
+        <!-- INSTRUÇÕES FINAIS -->
+        <div class="dns-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+            <h2 style="margin-bottom: 20px;">📝 Próximos Passos</h2>
+            <ol style="margin-left: 20px; line-height: 1.8;">
+                <li><strong>Configure todos os registros DNS acima</strong> no painel do seu provedor de domínio</li>
+                <li><strong>Aguarde de 1 a 6 horas</strong> para propagação DNS</li>
+                <li><strong>Verifique a propagação:</strong> <a href="https://dnschecker.org" target="_blank" style="color: #ffd700;">dnschecker.org</a></li>
+                <li><strong>Teste seu email:</strong> Envie para <a href="https://www.mail-tester.com" target="_blank" style="color: #ffd700;">mail-tester.com</a></li>
+                <li><strong>Verifique SPF/DKIM:</strong> <a href="https://mxtoolbox.com/SuperTool.aspx" target="_blank" style="color: #ffd700;">mxtoolbox.com</a></li>
+                <li><strong>Configure seu cliente de email</strong> (Outlook, Gmail, etc.) com as credenciais acima</li>
+            </ol>
         </div>
 
     </div>
 
     <script>
-        function copyToClipboard(element) {
-            const text = element.textContent.trim();
-            navigator.clipboard.writeText(text).then(() => {
+        function copyToClipboard(element, text) {
+            // Se text não foi fornecido, pega do elemento
+            const textToCopy = text || element.textContent.trim();
+            
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                // Mudar cor do elemento
                 const original = element.style.background;
-                element.style.background = '#4caf50';
-                setTimeout(() => element.style.background = original, 1000);
+                const originalBorder = element.style.borderColor;
+                element.style.background = '#28a745';
+                element.style.borderColor = '#28a745';
+                element.style.color = 'white';
+                
+                // Mostrar notificação
+                const notification = document.getElementById('copyNotification');
+                notification.style.display = 'block';
+                
+                setTimeout(() => {
+                    element.style.background = original;
+                    element.style.borderColor = originalBorder;
+                    element.style.color = '';
+                    notification.style.display = 'none';
+                }, 1500);
+            }).catch(err => {
+                alert('Erro ao copiar. Use Ctrl+C para copiar manualmente.');
             });
         }
     </script>
@@ -555,45 +814,164 @@ cat > /var/www/html/index.html << EOFHTML
 EOFHTML
 
 # ====================================
-# RESUMO FINAL
+# RESUMO FINAL NO TERMINAL
 # ====================================
 echo -e "\n${GREEN}╔════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║       INSTALAÇÃO CONCLUÍDA COM SUCESSO!    ║${NC}"
 echo -e "${GREEN}╠════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║ Domínio: ${YELLOW}$FULL_DOMAIN${NC}"
-echo -e "${GREEN}║ IP: ${YELLOW}$PUBLIC_IP${NC}"
-echo -e "${GREEN}║ Usuários: ${YELLOW}$CONTADOR${NC}"
+echo -e "${GREEN}║ IP Detectado: ${YELLOW}$PUBLIC_IP${NC}"
+echo -e "${GREEN}║ Usuários criados: ${YELLOW}$CONTADOR${NC}"
 echo -e "${GREEN}╠════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║ 📧 Acesse: ${CYAN}http://$PUBLIC_IP${NC}"
+echo -e "${GREEN}║ 🌐 ou: ${CYAN}http://$FULL_DOMAIN${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════╝${NC}\n"
 
-echo -e "${CYAN}👥 USUÁRIOS CRIADOS:${NC}\n"
+echo -e "${CYAN}┌─────────────────────────────────────────┐${NC}"
+echo -e "${CYAN}│         👥 USUÁRIOS CRIADOS             │${NC}"
+echo -e "${CYAN}└─────────────────────────────────────────┘${NC}\n"
+
 for usuario in "${USUARIOS[@]}"; do
     USERNAME=$(echo "$usuario" | cut -d':' -f1)
     SENHA=$(echo "$usuario" | cut -d':' -f2)
-    echo -e "  ${GREEN}✓${NC} $USERNAME@$BASE_DOMAIN (senha: $SENHA)"
+    printf "${GREEN}  ✓${NC} %-30s ${YELLOW}%s${NC}\n" "$USERNAME@$BASE_DOMAIN" "(senha: $SENHA)"
 done
 
-echo -e "\n${CYAN}📋 PRÓXIMOS PASSOS:${NC}"
-echo -e "  1. Acesse: ${BLUE}http://$PUBLIC_IP${NC}"
-echo -e "  2. Configure DNS (SPF, DKIM, DMARC, MX, A)"
-echo -e "  3. Aguarde 1-6h propagação DNS"
-echo -e "  4. Teste em: ${BLUE}https://www.mail-tester.com${NC}\n"
+echo -e "\n${CYAN}┌─────────────────────────────────────────┐${NC}"
+echo -e "${CYAN}│       📋 CONFIGURAÇÕES DNS              │${NC}"
+echo -e "${CYAN}└─────────────────────────────────────────┘${NC}\n"
 
-# Log
+echo -e "${YELLOW}1. Registro A:${NC}"
+echo -e "   Nome: ${CYAN}$SUBDOMAIN${NC}"
+echo -e "   IP: ${GREEN}$PUBLIC_IP${NC}\n"
+
+echo -e "${YELLOW}2. Registro MX:${NC}"
+echo -e "   Nome: ${CYAN}@${NC}"
+echo -e "   Servidor: ${CYAN}$FULL_DOMAIN${NC}"
+echo -e "   Prioridade: ${CYAN}10${NC}\n"
+
+echo -e "${YELLOW}3. SPF (TXT):${NC}"
+echo -e "   Nome: ${CYAN}@${NC}"
+echo -e "   Valor: ${GREEN}v=spf1 ip4:$PUBLIC_IP a:$FULL_DOMAIN ~all${NC}\n"
+
+echo -e "${YELLOW}4. DKIM (TXT):${NC}"
+echo -e "   Nome: ${CYAN}$SUBDOMAIN._domainkey${NC}"
+echo -e "   (Veja a chave completa na página web)\n"
+
+echo -e "${YELLOW}5. DMARC (TXT):${NC}"
+echo -e "   Nome: ${CYAN}_dmarc${NC}"
+echo -e "   (Veja o valor completo na página web)\n"
+
+echo -e "${CYAN}📝 PRÓXIMOS PASSOS:${NC}"
+echo -e "  ${GREEN}1.${NC} Acesse: ${BLUE}http://$PUBLIC_IP${NC}"
+echo -e "  ${GREEN}2.${NC} Configure todos os registros DNS listados"
+echo -e "  ${GREEN}3.${NC} Aguarde 1-6h para propagação DNS"
+echo -e "  ${GREEN}4.${NC} Teste em: ${BLUE}https://www.mail-tester.com${NC}"
+echo -e "  ${GREEN}5.${NC} Verifique em: ${BLUE}https://mxtoolbox.com${NC}\n"
+
+# Log detalhado
 cat >> /var/log/mail-setup.log << EOFLOG
 ════════════════════════════════════════
 Instalação: $(date)
 Domínio: $FULL_DOMAIN
-IP: $PUBLIC_IP
-Usuários: $CONTADOR
+Subdomínio: $SUBDOMAIN
+Domínio Base: $BASE_DOMAIN
+IP Público: $PUBLIC_IP
+Usuários criados: $CONTADOR
 ════════════════════════════════════════
 EOFLOG
+
+# Criar arquivo com resumo das configurações
+cat > /root/smtp-config-summary.txt << EOFSUMMARY
+════════════════════════════════════════════════════════
+        RESUMO DA CONFIGURAÇÃO SMTP
+════════════════════════════════════════════════════════
+
+Data: $(date)
+Domínio: $FULL_DOMAIN
+IP Público: $PUBLIC_IP
+Usuários criados: $CONTADOR
+
+════════════════════════════════════════════════════════
+                 REGISTROS DNS
+════════════════════════════════════════════════════════
+
+1. REGISTRO A
+   Tipo: A
+   Nome: $SUBDOMAIN
+   IP: $PUBLIC_IP
+   TTL: 3600
+
+2. REGISTRO MX
+   Tipo: MX
+   Nome: @
+   Servidor: $FULL_DOMAIN
+   Prioridade: 10
+   TTL: 3600
+
+3. SPF
+   Tipo: TXT
+   Nome: @
+   Valor: v=spf1 ip4:$PUBLIC_IP a:$FULL_DOMAIN ~all
+   TTL: 3600
+
+4. DKIM
+   Tipo: TXT
+   Nome: $SUBDOMAIN._domainkey
+   Valor: v=DKIM1; k=rsa; p=$DKIM_KEY
+   TTL: 3600
+
+5. DMARC
+   Tipo: TXT
+   Nome: _dmarc
+   Valor: v=DMARC1; p=quarantine; rua=mailto:admin@$BASE_DOMAIN; aspf=r; adkim=r
+   TTL: 3600
+
+════════════════════════════════════════════════════════
+              USUÁRIOS DE EMAIL
+════════════════════════════════════════════════════════
+
+EOFSUMMARY
+
+for usuario in "${USUARIOS[@]}"; do
+    USERNAME=$(echo "$usuario" | cut -d':' -f1)
+    SENHA=$(echo "$usuario" | cut -d':' -f2)
+    echo "$USERNAME@$BASE_DOMAIN - Senha: $SENHA" >> /root/smtp-config-summary.txt
+done
+
+cat >> /root/smtp-config-summary.txt << EOFSUMMARY2
+
+════════════════════════════════════════════════════════
+        CONFIGURAÇÕES DO SERVIDOR DE EMAIL
+════════════════════════════════════════════════════════
+
+Servidor SMTP: $FULL_DOMAIN
+Porta SMTP: 25 ou 587
+Servidor IMAP: $FULL_DOMAIN
+Porta IMAP: 143
+Servidor POP3: $FULL_DOMAIN
+Porta POP3: 110
+
+════════════════════════════════════════════════════════
+                 ACESSO À PÁGINA WEB
+════════════════════════════════════════════════════════
+
+http://$PUBLIC_IP
+http://$FULL_DOMAIN
+
+════════════════════════════════════════════════════════
+EOFSUMMARY2
+
+echo -e "${GREEN}✓ Resumo salvo em: ${CYAN}/root/smtp-config-summary.txt${NC}"
+echo -e "${GREEN}✓ Log salvo em: ${CYAN}/var/log/mail-setup.log${NC}\n"
 
 # Limpar
 rm -f /usr/sbin/policy-rc.d
 rm -f /etc/needrestart/conf.d/99-autorestart.conf
 export DEBIAN_FRONTEND=dialog
 
-echo -e "${GREEN}🎉 Script finalizado!${NC}\n"
+echo -e "${GREEN}╔════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║         🎉 SCRIPT FINALIZADO!              ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════════╝${NC}\n"
+
 exit 0
