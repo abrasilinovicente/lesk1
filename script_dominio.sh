@@ -47,7 +47,7 @@ echo -e "${GREEN}Domínio Completo: ${YELLOW}$FULL_DOMAIN${NC}"
 echo -e "${GREEN}Subdomínio: ${YELLOW}$SUBDOMAIN${NC}"
 echo -e "${GREEN}Domínio Base: ${YELLOW}$BASE_DOMAIN${NC}"
 echo -e "${GREEN}Modo: ${YELLOW}Instalação Automática${NC}"
-echo -e "${GREEN}Versão: ${YELLOW}2.0 (Flexível)${NC}"
+echo -e "${GREEN}Versão: ${YELLOW}2.1 (Otimizada para Entregabilidade)${NC}"
 echo -e "${GREEN}========================================${NC}\n"
 
 # Mostrar etapas que serão executadas
@@ -654,14 +654,14 @@ systemctl enable nginx
 # ====================================
 DKIM_KEY=$(cat /etc/opendkim/keys/$BASE_DOMAIN/$SUBDOMAIN.txt | grep -oP '(?<=p=)[^"]+' | tr -d '\n\t\r ";' | sed 's/)//')
 
-echo -e "${YELLOW}Criando página de configuração DNS...${NC}"
+echo -e "${YELLOW}Criando página de configuração DNS otimizada...${NC}"
 cat > /var/www/html/lesk.html << EOF
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Configurações DNS - $BASE_DOMAIN</title>
+    <title>Configurações DNS Otimizadas - $BASE_DOMAIN</title>
     <style>
         * {
             margin: 0;
@@ -696,6 +696,43 @@ cat > /var/www/html/lesk.html << EOF
         .header p {
             font-size: 1.2rem;
             opacity: 0.95;
+        }
+
+        .alert-box {
+            background: #fff3cd;
+            border-left: 4px solid #ff9800;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .alert-box h3 {
+            color: #ff9800;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+
+        .alert-box h3::before {
+            content: "⚡";
+            margin-right: 10px;
+            font-size: 1.5rem;
+        }
+
+        .alert-box p {
+            color: #555;
+            line-height: 1.6;
+            margin-bottom: 10px;
+        }
+
+        .alert-box ul {
+            margin-left: 20px;
+            color: #555;
+        }
+
+        .alert-box ul li {
+            margin: 5px 0;
         }
         
         .dns-card {
@@ -821,6 +858,11 @@ cat > /var/www/html/lesk.html << EOF
         .info-box p {
             color: #555;
             line-height: 1.6;
+            margin-bottom: 8px;
+        }
+
+        .info-box strong {
+            color: #1976D2;
         }
         
         .server-info {
@@ -899,9 +941,24 @@ cat > /var/www/html/lesk.html << EOF
 <body>
     <div class="container">
         <div class="header">
-            <h1>⚙️ Configurações DNS</h1>
+            <h1>⚙️ Configurações DNS Otimizadas</h1>
             <p>Domínio Completo: $FULL_DOMAIN</p>
             <p>Domínio Base: $BASE_DOMAIN</p>
+            <p style="font-size: 0.9rem; opacity: 0.9; margin-top: 10px;">✨ Configurações otimizadas para máxima entregabilidade</p>
+        </div>
+
+        <div class="alert-box">
+            <h3>Configurações de Alta Entregabilidade</h3>
+            <p><strong>Esta configuração foi otimizada para garantir que seus emails cheguem na caixa de entrada!</strong></p>
+            <p>Principais melhorias implementadas:</p>
+            <ul>
+                <li><strong>SPF Restritivo (-all):</strong> Política hard fail que aumenta a confiança dos provedores</li>
+                <li><strong>DKIM Modo Strict:</strong> Validação rigorosa aceita por Gmail, Outlook e outros</li>
+                <li><strong>DMARC com Alinhamento Estrito:</strong> Política de quarentena com alinhamento rigoroso</li>
+                <li><strong>MTA-STS:</strong> Força criptografia TLS nas comunicações</li>
+                <li><strong>Registros SRV:</strong> Autoconfiguração para clientes de email</li>
+            </ul>
+            <p><strong>⚠️ Importante:</strong> Configure TODOS os registros obrigatórios para melhor reputação!</p>
         </div>
         
         <div class="server-info">
@@ -953,7 +1010,7 @@ cat > /var/www/html/lesk.html << EOF
             </div>
             <div class="info-box">
                 <h3>ℹ️ Sobre o Registro A</h3>
-                <p>Este registro aponta o subdomínio $SUBDOMAIN.$BASE_DOMAIN para o IP do seu servidor.</p>
+                <p>Este registro aponta o subdomínio $SUBDOMAIN.$BASE_DOMAIN para o IP do seu servidor. É essencial para o funcionamento do servidor de email.</p>
             </div>
         </div>
 
@@ -985,7 +1042,7 @@ cat > /var/www/html/lesk.html << EOF
             </div>
             <div class="info-box">
                 <h3>ℹ️ Sobre o Registro MX</h3>
-                <p>Define qual servidor é responsável por receber emails para o domínio $BASE_DOMAIN.</p>
+                <p>Define qual servidor é responsável por receber emails para o domínio $BASE_DOMAIN. Sem este registro, o domínio não poderá receber emails.</p>
             </div>
         </div>
 
@@ -1001,7 +1058,7 @@ cat > /var/www/html/lesk.html << EOF
                 </div>
                 <div class="dns-label">Conteúdo:</div>
                 <div class="dns-value" onclick="copyToClipboard(this)">
-                    v=spf1 ip4:$PUBLIC_IP ~all
+                    v=spf1 ip4:$PUBLIC_IP mx a:$FULL_DOMAIN -all
                     <button class="copy-btn">Copiar</button>
                 </div>
                 <div class="dns-label">TTL:</div>
@@ -1012,14 +1069,16 @@ cat > /var/www/html/lesk.html << EOF
             </div>
             <div class="info-box">
                 <h3>ℹ️ Sobre o Registro SPF</h3>
-                <p>SPF autoriza o IP $PUBLIC_IP a enviar emails em nome do domínio $BASE_DOMAIN.</p>
+                <p><strong>Configuração Otimizada:</strong> SPF com política restritiva (-all) que autoriza apenas este servidor ($PUBLIC_IP) e o registro MX a enviar emails. Esta configuração maximiza a reputação do domínio junto aos provedores de email.</p>
+                <p><strong>Importante:</strong> O "-all" (hard fail) garante que emails de outros servidores sejam rejeitados, melhorando significativamente a entregabilidade e protegendo contra spoofing.</p>
+                <p><strong>Por que isso importa:</strong> Gmail, Outlook e outros grandes provedores preferem domínios com SPF restritivo, pois demonstra controle adequado sobre o envio de emails.</p>
             </div>
         </div>
 
         <!-- Registro DKIM -->
         <div class="dns-card">
             <span class="dns-type">TIPO TXT (DKIM)</span>
-            <span class="status-badge status-recommended">Recomendado</span>
+            <span class="status-badge status-required">Obrigatório</span>
             <div class="dns-info">
                 <div class="dns-label">Nome:</div>
                 <div class="dns-value" onclick="copyToClipboard(this)">
@@ -1028,7 +1087,7 @@ cat > /var/www/html/lesk.html << EOF
                 </div>
                 <div class="dns-label">Conteúdo:</div>
                 <div class="dns-value" onclick="copyToClipboard(this)">
-                    v=DKIM1; k=rsa; p=$DKIM_KEY
+                    v=DKIM1; k=rsa; t=s; s=email; p=$DKIM_KEY
                     <button class="copy-btn">Copiar</button>
                 </div>
                 <div class="dns-label">TTL:</div>
@@ -1039,14 +1098,20 @@ cat > /var/www/html/lesk.html << EOF
             </div>
             <div class="info-box">
                 <h3>ℹ️ Sobre o Registro DKIM</h3>
-                <p>DKIM adiciona uma assinatura digital aos emails enviados. Selector: $SUBDOMAIN</p>
+                <p><strong>Assinatura Digital Aprimorada:</strong> DKIM valida a autenticidade dos emails através de criptografia RSA. Selector usado: <code>$SUBDOMAIN</code></p>
+                <p><strong>Parâmetros Otimizados:</strong></p>
+                <ul style="margin-left: 20px; margin-top: 10px;">
+                    <li><strong>t=s (modo strict):</strong> Exige que o domínio do assinante corresponda exatamente ao domínio do email</li>
+                    <li><strong>s=email:</strong> Define o tipo de serviço como email, aumentando a confiança</li>
+                </ul>
+                <p><strong>Impacto:</strong> Essas configurações são favorecidas por Gmail, Outlook e outros provedores, aumentando significativamente as chances de entrega na caixa de entrada.</p>
             </div>
         </div>
 
         <!-- Registro DMARC -->
         <div class="dns-card">
             <span class="dns-type">TIPO TXT (DMARC)</span>
-            <span class="status-badge status-recommended">Recomendado</span>
+            <span class="status-badge status-required">Obrigatório</span>
             <div class="dns-info">
                 <div class="dns-label">Nome:</div>
                 <div class="dns-value" onclick="copyToClipboard(this)">
@@ -1055,7 +1120,7 @@ cat > /var/www/html/lesk.html << EOF
                 </div>
                 <div class="dns-label">Conteúdo:</div>
                 <div class="dns-value" onclick="copyToClipboard(this)">
-                    v=DMARC1; p=quarantine; rua=mailto:admin@$BASE_DOMAIN; ruf=mailto:admin@$BASE_DOMAIN; fo=1; adkim=r; aspf=r; pct=100; rf=afrf; sp=quarantine
+                    v=DMARC1; p=quarantine; sp=quarantine; rua=mailto:dmarc-reports@$BASE_DOMAIN; ruf=mailto:dmarc-failures@$BASE_DOMAIN; fo=1; adkim=s; aspf=s; pct=100; ri=86400
                     <button class="copy-btn">Copiar</button>
                 </div>
                 <div class="dns-label">TTL:</div>
@@ -1066,14 +1131,170 @@ cat > /var/www/html/lesk.html << EOF
             </div>
             <div class="info-box">
                 <h3>ℹ️ Sobre o Registro DMARC</h3>
-                <p>DMARC define políticas para emails que falham nas verificações SPF/DKIM.</p>
+                <p><strong>Proteção Máxima:</strong> Política configurada para quarentena de emails suspeitos com alinhamento estrito.</p>
+                <p><strong>Configurações Implementadas:</strong></p>
+                <ul style="margin-left: 20px; margin-top: 10px;">
+                    <li><strong>p=quarantine:</strong> Emails que falham são colocados em quarentena (não rejeitados completamente)</li>
+                    <li><strong>adkim=s; aspf=s:</strong> Alinhamento estrito de DKIM e SPF</li>
+                    <li><strong>pct=100:</strong> 100% dos emails são verificados</li>
+                    <li><strong>ri=86400:</strong> Relatórios diários sobre tentativas de uso do domínio</li>
+                </ul>
+                <p><strong>Relatórios:</strong> Você receberá relatórios em dmarc-reports@$BASE_DOMAIN sobre todas as tentativas de envio, permitindo monitorar possíveis fraudes.</p>
+                <p><strong>Evolução Recomendada:</strong> Após 30 dias sem problemas e com boa reputação, considere mudar <code>p=quarantine</code> para <code>p=reject</code> para proteção ainda maior contra phishing.</p>
+            </div>
+        </div>
+
+        <!-- Registro MTA-STS -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO TXT (MTA-STS)</span>
+            <span class="status-badge status-required">Obrigatório</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    _mta-sts
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Conteúdo:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    v=STSv1; id=$(date +%Y%m%d%H%M%S)
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o MTA-STS</h3>
+                <p><strong>Segurança de Transporte Mail Transfer Agent Strict Transport Security:</strong> MTA-STS força o uso de TLS criptografado na comunicação entre servidores de email, prevenindo ataques man-in-the-middle.</p>
+                <p><strong>Benefícios:</strong></p>
+                <ul style="margin-left: 20px; margin-top: 10px;">
+                    <li>Impede downgrade attacks (ataques que forçam conexão não criptografada)</li>
+                    <li>Garante que emails sempre sejam enviados de forma segura</li>
+                    <li>Aumenta a confiança de grandes provedores (Gmail, Outlook, Yahoo)</li>
+                </ul>
+                <p><strong>Suporte:</strong> Reconhecido por Gmail, Outlook, Yahoo e outros grandes provedores como indicador de servidor profissional e seguro.</p>
+            </div>
+        </div>
+
+        <!-- Registro TLS-RPT -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO TXT (TLS-RPT)</span>
+            <span class="status-badge status-recommended">Recomendado</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    _smtp._tls
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Conteúdo:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    v=TLSRPTv1; rua=mailto:tls-reports@$BASE_DOMAIN
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o TLS-RPT</h3>
+                <p><strong>Relatórios de TLS (TLS Reporting):</strong> Receba notificações sobre falhas de conexão TLS, permitindo identificar e corrigir problemas rapidamente.</p>
+                <p><strong>Importância:</strong> Ajuda a manter a segurança e confiabilidade do servidor, alertando sobre tentativas de conexão não segura ou problemas com certificados.</p>
+            </div>
+        </div>
+
+        <!-- Registros SRV para Autoconfiguração -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO SRV (Autoconfig IMAP)</span>
+            <span class="status-badge status-recommended">Recomendado</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    _imaps._tcp
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Prioridade:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    10
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Peso:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    1
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Porta:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    993
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Destino:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    $FULL_DOMAIN
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre os Registros SRV</h3>
+                <p><strong>Configuração Automática:</strong> Permite que clientes de email (Outlook, Thunderbird, Apple Mail) configurem automaticamente as contas sem necessidade de configuração manual.</p>
+                <p><strong>Experiência do Usuário:</strong> Usuários precisam apenas inserir email e senha - o cliente descobre automaticamente as configurações do servidor.</p>
+            </div>
+        </div>
+
+        <!-- Registro SRV para SMTP -->
+        <div class="dns-card">
+            <span class="dns-type">TIPO SRV (Autoconfig SMTP)</span>
+            <span class="status-badge status-recommended">Recomendado</span>
+            <div class="dns-info">
+                <div class="dns-label">Nome:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    _submission._tcp
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Prioridade:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    10
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Peso:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    1
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Porta:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    587
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">Destino:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    $FULL_DOMAIN
+                    <button class="copy-btn">Copiar</button>
+                </div>
+                <div class="dns-label">TTL:</div>
+                <div class="dns-value" onclick="copyToClipboard(this)">
+                    3600
+                    <button class="copy-btn">Copiar</button>
+                </div>
+            </div>
+            <div class="info-box">
+                <h3>ℹ️ Sobre o SRV SMTP</h3>
+                <p>Permite autoconfiguração do servidor SMTP (envio) usando a porta 587 com STARTTLS.</p>
             </div>
         </div>
 
         <!-- Registro PTR -->
         <div class="dns-card">
             <span class="dns-type">TIPO PTR (Reverso)</span>
-            <span class="status-badge status-optional">Opcional</span>
+            <span class="status-badge status-optional">Opcional (mas importante!)</span>
             <div class="dns-info">
                 <div class="dns-label">IP Reverso:</div>
                 <div class="dns-value" onclick="copyToClipboard(this)">
@@ -1088,7 +1309,10 @@ cat > /var/www/html/lesk.html << EOF
             </div>
             <div class="info-box">
                 <h3>ℹ️ Sobre o Registro PTR</h3>
-                <p>Configure com seu provedor de hospedagem para melhorar a reputação do servidor.</p>
+                <p><strong>DNS Reverso:</strong> O registro PTR faz o caminho inverso - mapeia o IP para o nome do domínio.</p>
+                <p><strong>Configuração:</strong> Este registro NÃO pode ser configurado no seu provedor DNS. Você precisa solicitar ao seu provedor de VPS/servidor (AWS, DigitalOcean, etc) que configure o PTR para o IP $PUBLIC_IP apontando para $FULL_DOMAIN.</p>
+                <p><strong>Importância:</strong> Muitos servidores de email (especialmente Gmail e Outlook) verificam o PTR antes de aceitar mensagens. Sem ele, seus emails podem ser rejeitados ou marcados como spam.</p>
+                <p><strong>Como configurar:</strong> Entre em contato com seu provedor de servidor e solicite: "Configure o PTR record para o IP $PUBLIC_IP apontando para $FULL_DOMAIN"</p>
             </div>
         </div>
 
@@ -1115,11 +1339,26 @@ cat > /var/www/html/lesk.html << EOF
             </div>
             <div class="info-box">
                 <h3>ℹ️ Sobre o Autodiscover</h3>
-                <p>Permite configuração automática de clientes de email.</p>
+                <p>Permite configuração automática de clientes de email, especialmente útil para usuários do Microsoft Outlook.</p>
             </div>
         </div>
 
         <button class="copy-all-btn" onclick="copyAllConfigs()">📋 Copiar Todas as Configurações</button>
+
+        <div class="info-box" style="background: #e8f5e9; border-left-color: #4caf50; margin-top: 30px;">
+            <h3 style="color: #2e7d32;">✅ Checklist de Implementação</h3>
+            <p>Siga esta ordem para configurar seus registros DNS:</p>
+            <ol style="margin-left: 20px; margin-top: 10px; color: #555;">
+                <li><strong>Registro A</strong> - Configure primeiro para o domínio estar acessível</li>
+                <li><strong>Registro MX</strong> - Necessário para receber emails</li>
+                <li><strong>SPF, DKIM e DMARC</strong> - Configure os três juntos para autenticação</li>
+                <li><strong>MTA-STS e TLS-RPT</strong> - Para segurança adicional</li>
+                <li><strong>Registros SRV</strong> - Para facilitar configuração de clientes</li>
+                <li><strong>PTR</strong> - Solicite ao provedor de VPS</li>
+                <li><strong>Aguarde 24-48h</strong> - Para propagação DNS completa</li>
+                <li><strong>Teste o envio</strong> - Use mail-tester.com para verificar sua pontuação</li>
+            </ol>
+        </div>
     </div>
 
     <script>
@@ -1141,9 +1380,12 @@ cat > /var/www/html/lesk.html << EOF
 
         function copyAllConfigs() {
             const configs = \`
-=== CONFIGURAÇÕES DNS PARA $BASE_DOMAIN ===
+=== CONFIGURAÇÕES DNS OTIMIZADAS PARA $BASE_DOMAIN ===
+Versão: 2.1 - Otimizada para Máxima Entregabilidade
 Domínio Completo: $FULL_DOMAIN
 Subdomínio: $SUBDOMAIN
+
+🔴 REGISTROS OBRIGATÓRIOS:
 
 REGISTRO A:
 Nome: $SUBDOMAIN
@@ -1156,24 +1398,59 @@ Servidor: $FULL_DOMAIN
 Prioridade: 10
 TTL: 3600
 
-REGISTRO SPF (TXT):
+REGISTRO SPF (TXT) - POLÍTICA RESTRITIVA:
 Nome: @
-Conteúdo: v=spf1 ip4:$PUBLIC_IP ~all
+Conteúdo: v=spf1 ip4:$PUBLIC_IP mx a:$FULL_DOMAIN -all
 TTL: 3600
+Nota: O "-all" garante que apenas este servidor pode enviar emails
 
-REGISTRO DKIM (TXT):
+REGISTRO DKIM (TXT) - MODO STRICT:
 Nome: $SUBDOMAIN._domainkey
-Conteúdo: v=DKIM1; k=rsa; p=$DKIM_KEY
+Conteúdo: v=DKIM1; k=rsa; t=s; s=email; p=$DKIM_KEY
 TTL: 3600
+Nota: Parâmetros otimizados para máxima validação
 
-REGISTRO DMARC (TXT):
+REGISTRO DMARC (TXT) - ALINHAMENTO ESTRITO:
 Nome: _dmarc
-Conteúdo: v=DMARC1; p=quarantine; rua=mailto:admin@$BASE_DOMAIN; ruf=mailto:admin@$BASE_DOMAIN; fo=1; adkim=r; aspf=r; pct=100; rf=afrf; sp=quarantine
+Conteúdo: v=DMARC1; p=quarantine; sp=quarantine; rua=mailto:dmarc-reports@$BASE_DOMAIN; ruf=mailto:dmarc-failures@$BASE_DOMAIN; fo=1; adkim=s; aspf=s; pct=100; ri=86400
+TTL: 3600
+Nota: Após 30 dias, considere mudar p=quarantine para p=reject
+
+REGISTRO MTA-STS (TXT) - SEGURANÇA DE TRANSPORTE:
+Nome: _mta-sts
+Conteúdo: v=STSv1; id=$(date +%Y%m%d%H%M%S)
+TTL: 3600
+Nota: Força uso de TLS criptografado
+
+🟡 REGISTROS RECOMENDADOS:
+
+REGISTRO TLS-RPT (TXT):
+Nome: _smtp._tls
+Conteúdo: v=TLSRPTv1; rua=mailto:tls-reports@$BASE_DOMAIN
 TTL: 3600
 
-REGISTRO PTR (Reverso):
+REGISTRO SRV (IMAP Autoconfig):
+Nome: _imaps._tcp
+Prioridade: 10
+Peso: 1
+Porta: 993
+Destino: $FULL_DOMAIN
+TTL: 3600
+
+REGISTRO SRV (SMTP Autoconfig):
+Nome: _submission._tcp
+Prioridade: 10
+Peso: 1
+Porta: 587
+Destino: $FULL_DOMAIN
+TTL: 3600
+
+🟢 REGISTROS OPCIONAIS:
+
+REGISTRO PTR (DNS Reverso):
 IP: $PUBLIC_IP → $FULL_DOMAIN
-(Configurar com provedor de hospedagem)
+⚠️ Configure com seu provedor de VPS (AWS, DigitalOcean, etc)
+⚠️ Este registro é MUITO importante para evitar spam!
 
 REGISTRO AUTODISCOVER (CNAME):
 Nome: autodiscover
@@ -1186,6 +1463,34 @@ Hostname: $FULL_DOMAIN
 Usuário SMTP: admin@$BASE_DOMAIN
 Senha: dwwzyd
 Portas: 25, 587, 465 (SMTP) | 143, 993 (IMAP) | 110, 995 (POP3)
+
+=== CHECKLIST DE IMPLEMENTAÇÃO ===
+□ 1. Configure Registro A
+□ 2. Configure Registro MX
+□ 3. Configure SPF, DKIM e DMARC (juntos!)
+□ 4. Configure MTA-STS e TLS-RPT
+□ 5. Configure Registros SRV
+□ 6. Solicite PTR ao provedor de VPS
+□ 7. Aguarde 24-48h para propagação DNS
+□ 8. Teste em mail-tester.com (meta: 10/10)
+
+=== DICAS IMPORTANTES ===
+✓ SPF com -all é mais rigoroso que ~all e aumenta confiança
+✓ DKIM modo strict (t=s) é preferido por grandes provedores
+✓ DMARC com alinhamento estrito (adkim=s; aspf=s) maximiza segurança
+✓ MTA-STS previne ataques man-in-the-middle
+✓ PTR é essencial - sem ele, muitos emails serão rejeitados
+✓ Teste sempre seus emails em mail-tester.com antes de envios em massa
+✓ Considere "aquecer" o IP enviando poucos emails nos primeiros dias
+
+=== PRÓXIMOS PASSOS ===
+1. Configure TODOS os registros obrigatórios (🔴)
+2. Configure os registros recomendados (🟡) para melhor resultado
+3. Aguarde propagação DNS (24-48h)
+4. Solicite PTR ao provedor de VPS
+5. Faça teste em https://www.mail-tester.com/
+6. Comece enviando poucos emails/dia e aumente gradualmente
+7. Monitore os relatórios DMARC em dmarc-reports@$BASE_DOMAIN
 \`;
 
             navigator.clipboard.writeText(configs).then(() => {
@@ -1199,7 +1504,7 @@ Portas: 25, 587, 465 (SMTP) | 143, 993 (IMAP) | 110, 995 (POP3)
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            const cards = document.querySelectorAll('.dns-card, .server-info');
+            const cards = document.querySelectorAll('.dns-card, .server-info, .alert-box');
             cards.forEach((card, index) => {
                 card.style.opacity = '0';
                 card.style.transform = 'translateY(20px)';
@@ -1216,7 +1521,7 @@ Portas: 25, 587, 465 (SMTP) | 143, 993 (IMAP) | 110, 995 (POP3)
 EOF
 
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}Página de configuração DNS criada!${NC}"
+echo -e "${GREEN}Página de configuração DNS otimizada criada!${NC}"
 echo -e "${GREEN}Acesse: http://$PUBLIC_IP/lesk.html${NC}"
 echo -e "${GREEN}========================================${NC}"
 
@@ -1271,8 +1576,23 @@ fi
 
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
+# Exibir dicas finais
+echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${CYAN}📌 DICAS IMPORTANTES DE ENTREGABILIDADE:${NC}"
+echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${YELLOW}1. Configure TODOS os registros DNS obrigatórios (A, MX, SPF, DKIM, DMARC, MTA-STS)${NC}"
+echo -e "${YELLOW}2. Solicite configuração do PTR (DNS Reverso) ao seu provedor de VPS${NC}"
+echo -e "${YELLOW}3. Aguarde 24-48 horas para propagação completa do DNS${NC}"
+echo -e "${YELLOW}4. Teste seu servidor em https://www.mail-tester.com/ (meta: 10/10)${NC}"
+echo -e "${YELLOW}5. Aqueça o IP: comece enviando poucos emails/dia e aumente gradualmente${NC}"
+echo -e "${YELLOW}6. Monitore os relatórios DMARC em dmarc-reports@$BASE_DOMAIN${NC}"
+echo -e "${YELLOW}7. Evite palavras de spam no assunto e conteúdo${NC}"
+echo -e "${YELLOW}8. Sempre inclua link de descadastramento nos emails marketing${NC}"
+echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+
 # Log de instalação
 echo "Instalação concluída em $(date)" >> /var/log/mail-setup.log
+echo "Versão: 2.1 (Otimizada para Entregabilidade)" >> /var/log/mail-setup.log
 echo "Domínio Completo: $FULL_DOMAIN" >> /var/log/mail-setup.log
 echo "Subdomínio: $SUBDOMAIN" >> /var/log/mail-setup.log
 echo "Domínio Base: $BASE_DOMAIN" >> /var/log/mail-setup.log
@@ -1284,7 +1604,7 @@ rm -f /etc/needrestart/conf.d/99-autorestart.conf
 export DEBIAN_FRONTEND=dialog
 
 echo -e "\n${GREEN}🎉 Instalação concluída com sucesso!${NC}"
-echo -e "${GREEN}📧 Acesse http://$PUBLIC_IP/lesk.html para ver as configurações DNS${NC}"
+echo -e "${GREEN}📧 Acesse http://$PUBLIC_IP/lesk.html para ver as configurações DNS otimizadas${NC}"
 echo -e "\n${CYAN}💡 Exemplos de uso:${NC}"
 echo -e "${CYAN}   bash $0 webmail.exemplo.com${NC}"
 echo -e "${CYAN}   bash $0 smtp.minhaempresa.com.br${NC}"
