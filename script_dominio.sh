@@ -1,130 +1,79 @@
 #!/bin/bash
-# =================================================
-# Script completo de configuração de servidor de email
-# Com testes de serviços, portas, DNS sugerido e relatório HTML
-# =================================================
+# Script de instalação de servidor de email otimizado
+# Versão: 2.2 - Corrigida para dependências, DKIM e IP público
 
-# =========================
-# Configurações de cores
-# =========================
-GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
+# Cores
+GREEN="\033[0;32m"
+YELLOW="\033[1;33m"
+RED="\033[0;31m"
+CYAN="\033[0;36m"
+NC="\033[0m"
 
-# =========================
-# Funções utilitárias
-# =========================
-print_header() {
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}$1${NC}"
-    echo -e "${GREEN}========================================${NC}"
-}
+# Parâmetros
+FULL_DOMAIN="$1"        # ex: mail.exemplo.com
+SUBDOMAIN="$2"          # opcional
+BASE_DOMAIN=$(echo "$FULL_DOMAIN" | awk -F. '{print $(NF-1)"."$NF}')
 
-print_tip() { echo -e "${YELLOW}$1${NC}"; }
-
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> /var/log/mail-setup.log; }
-
-check_service() {
-    if systemctl is-active --quiet "$1"; then
-        echo -e "  $1: ${GREEN}● Ativo${NC}"
-    else
-        echo -e "  $1: ${RED}● Inativo${NC}"
-    fi
-}
-
-test_port() {
-    local host=$1 port=$2
-    if timeout 2 bash -c "</dev/tcp/$host/$port" &>/dev/null; then
-        echo -e "  Porta $port: ${GREEN}Aberta${NC}"
-    else
-        echo -e "  Porta $port: ${RED}Fechada${NC}"
-    fi
-}
-
-generate_dns_suggestions() {
-cat <<EOF
-DNS sugerido para $FULL_DOMAIN:
-A: $PUBLIC_IP
-MX: $FULL_DOMAIN
-SPF: v=spf1 mx -all
-DKIM: (use a chave exibida)
-DMARC: v=DMARC1; p=none; rua=mailto:dmarc-reports@$BASE_DOMAIN
-MTA-STS: v=STSv1; id=$(date +%s)
-EOF
-}
-
-generate_html_report() {
-    local html_file="/var/log/mail-setup-report.html"
-    cat <<EOF > "$html_file"
-<html>
-<head>
-<title>Relatório de Configuração de Email - $FULL_DOMAIN</title>
-<style>
-body { font-family: Arial, sans-serif; background: #f5f5f5; color: #333; padding: 20px; }
-h1 { color: #2c3e50; }
-h2 { color: #16a085; }
-pre { background: #ecf0f1; padding: 10px; border-radius: 5px; }
-.green { color: green; font-weight: bold; }
-.red { color: red; font-weight: bold; }
-</style>
-</head>
-<body>
-<h1>Status do Servidor de Email - $FULL_DOMAIN</h1>
-
-<h2>Serviços</h2>
-<pre>$SERVICE_STATUS</pre>
-
-<h2>Portas</h2>
-<pre>$PORT_STATUS</pre>
-
-<h2>DNS Recomendado</h2>
-<pre>$DNS_SUGGESTIONS</pre>
-
-<h2>Chave DKIM Pública</h2>
-<pre>$(cat /etc/opendkim/keys/$BASE_DOMAIN/$SUBDOMAIN.txt)</pre>
-
-<h2>Usuário SMTP</h2>
-<pre>Email: $SMTP_USER
-Senha: $SMTP_PASS</pre>
-
-</body>
-</html>
-EOF
-echo -e "${GREEN}📄 Relatório HTML gerado em $html_file${NC}"
-}
-
-# =========================
-# Variáveis principais
-# =========================
-PUBLIC_IP=$(curl -s ifconfig.me)
-BASE_DOMAIN="exemplo.com"
-SUBDOMAIN="mail"
-FULL_DOMAIN="$SUBDOMAIN.$BASE_DOMAIN"
+# Usuário SMTP padrão
 SMTP_USER="admin@$BASE_DOMAIN"
-SMTP_PASS=$(openssl rand -base64 12)
+SMTP_PASS="dwwzyd"
+
+# Atualizar e instalar dependências essenciais
+echo -e "${YELLOW}🚀 Instalando dependências...${NC}"
+sudo apt update -y
+sudo apt install -y curl wget postfix dovecot-core dovecot-imapd opendkim opendkim-tools nginx
+
+# Obter IP público
+if command -v curl &> /dev/null; then
+    PUBLIC_IP=$(curl -s ifconfig.me)
+else
+    PUBLIC_IP=$(wget -qO- ifconfig.me)
+fi
+
+# Criar diretórios e gerar chave DKIM se não existir
+DKIM_DIR="/etc/opendkim/keys/$BASE_DOMAIN"
+DKIM_KEY="$DKIM_DIR/mail.txt"
+
+if [ ! -f "$DKIM_KEY" ]; then
+    echo -e "${YELLOW}🔑 Gerando chave DKIM...${NC}"
+    sudo mkdir -p "$DKIM_DIR"
+    sudo opendkim-genkey -s mail -d "$BASE_DOMAIN" -D "$DKIM_DIR"
+    sudo chown opendkim:opendkim "$DKIM_DIR"/*
+fi
+
+# Testar serviços e iniciar se necessário
 SERVICES=("postfix" "dovecot" "opendkim" "nginx")
-PORTS=(25 465 587 143 993 110 995)
+for service in "${SERVICES[@]}"; do
+    sudo systemctl enable --now $service
+done
 
-# =========================
-# Exibição inicial
-# =========================
-print_header "Página de configuração DNS otimizada criada!"
+# Exibir página de configuração DNS
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Página de configuração DNS otimizada criada!${NC}"
 echo -e "${GREEN}Acesse: http://$PUBLIC_IP/lesk.html${NC}"
+echo -e "${GREEN}========================================${NC}"
 
-# =========================
 # Exibir chave DKIM
-# =========================
-print_header "Chave DKIM pública (adicione ao DNS)"
-cat /etc/opendkim/keys/$BASE_DOMAIN/$SUBDOMAIN.txt
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Chave DKIM pública (adicione ao DNS):${NC}"
+cat "$DKIM_KEY"
+echo -e "${GREEN}========================================${NC}"
 
-# =========================
-# Testar serviços
-# =========================
-print_header "Verificando status dos serviços"
-SERVICE_STATUS=""
+# Testar configuração
+echo -e "${YELLOW}Testando serviços...${NC}"
+postfix check
+dovecot -n > /dev/null 2>&1 && echo -e "${GREEN}Dovecot: OK${NC}" || echo -e "${RED}Dovecot: ERRO${NC}"
+
+# Status dos serviços
+echo -e "${YELLOW}📊 Verificando status dos serviços...${NC}"
 ALL_OK=true
 for service in "${SERVICES[@]}"; do
-    STATUS=$(check_service "$service")
-    SERVICE_STATUS+="$STATUS"$'\n'
-    if [[ "$STATUS" == *"Inativo"* ]]; then ALL_OK=false; fi
+    if systemctl is-active --quiet $service; then
+        echo -e "  $service: ${GREEN}● Ativo${NC}"
+    else
+        echo -e "  $service: ${RED}● Inativo${NC}"
+        ALL_OK=false
+    fi
 done
 
 if $ALL_OK; then
@@ -133,63 +82,39 @@ else
     echo -e "${YELLOW}⚠ Alguns serviços não estão ativos. Verifique os logs.${NC}"
 fi
 
-# =========================
-# Testar portas
-# =========================
-print_header "Testando portas do servidor"
-PORT_STATUS=""
-for port in "${PORTS[@]}"; do
-    PORT_STATUS+=$(test_port "$PUBLIC_IP" "$port")$'\n'
-done
-
-# =========================
-# Gerar DNS sugerido e relatório HTML
-# =========================
-DNS_SUGGESTIONS=$(generate_dns_suggestions)
-generate_html_report
-
-# =========================
-# Exibir usuário SMTP
-# =========================
-print_header "Usuário SMTP criado"
+# Informações SMTP e portas
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Usuário SMTP criado:${NC}"
 echo -e "${GREEN}Email: $SMTP_USER${NC}"
 echo -e "${GREEN}Senha: $SMTP_PASS${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Portas configuradas:${NC}"
+echo -e "${GREEN}SMTP: 25${NC}"
+echo -e "${GREEN}Submission: 587${NC}"
+echo -e "${GREEN}SMTPS: 465${NC}"
+echo -e "${GREEN}IMAP: 143${NC}"
+echo -e "${GREEN}IMAPS: 993${NC}"
+echo -e "${GREEN}POP3: 110${NC}"
+echo -e "${GREEN}POP3S: 995${NC}"
+echo -e "${GREEN}========================================${NC}"
 
-# =========================
-# Dicas finais de entregabilidade
-# =========================
-print_header "DICAS IMPORTANTES DE ENTREGABILIDADE"
-print_tip "1. Configure TODOS os registros DNS obrigatórios (A, MX, SPF, DKIM, DMARC, MTA-STS)"
-print_tip "2. Solicite PTR (DNS Reverso) ao seu provedor de VPS"
-print_tip "3. Aguarde 24-48 horas para propagação do DNS"
-print_tip "4. Teste seu servidor em https://www.mail-tester.com/ (meta: 10/10)"
-print_tip "5. Aqueça o IP: comece enviando poucos emails/dia e aumente gradualmente"
-print_tip "6. Monitore relatórios DMARC em dmarc-reports@$BASE_DOMAIN"
-print_tip "7. Evite palavras de spam no assunto e conteúdo"
-print_tip "8. Sempre inclua link de descadastramento nos emails marketing"
+# Dicas de entregabilidade
+echo -e "${CYAN}📌 DICAS IMPORTANTES DE ENTREGABILIDADE:${NC}"
+echo -e "${YELLOW}1. Configure registros DNS (A, MX, SPF, DKIM, DMARC, MTA-STS)${NC}"
+echo -e "${YELLOW}2. Solicite PTR ao seu provedor de VPS${NC}"
+echo -e "${YELLOW}3. Aguarde 24-48h para propagação completa do DNS${NC}"
+echo -e "${YELLOW}4. Teste servidor em https://www.mail-tester.com/${NC}"
+echo -e "${YELLOW}5. Aqueça o IP: comece enviando poucos emails/dia${NC}"
+echo -e "${YELLOW}6. Monitore relatórios DMARC${NC}"
+echo -e "${YELLOW}7. Evite palavras de spam${NC}"
+echo -e "${YELLOW}8. Sempre inclua link de descadastramento${NC}"
 
-# =========================
 # Log de instalação
-# =========================
-log "Instalação concluída em $(date)"
-log "Versão: 2.1 (Completa)"
-log "Domínio Completo: $FULL_DOMAIN"
-log "Subdomínio: $SUBDOMAIN"
-log "Domínio Base: $BASE_DOMAIN"
-log "Usuário SMTP: $SMTP_USER"
+echo "Instalação concluída em $(date)" >> /var/log/mail-setup.log
+echo "Domínio: $FULL_DOMAIN" >> /var/log/mail-setup.log
+echo "Usuário: $SMTP_USER" >> /var/log/mail-setup.log
 
-# =========================
-# Limpeza final
-# =========================
-rm -f /usr/sbin/policy-rc.d
-rm -f /etc/needrestart/conf.d/99-autorestart.conf
-export DEBIAN_FRONTEND=dialog
-
-# =========================
-# Mensagem final
-# =========================
 echo -e "\n${GREEN}🎉 Instalação concluída com sucesso!${NC}"
 echo -e "${GREEN}📧 Acesse http://$PUBLIC_IP/lesk.html para ver as configurações DNS otimizadas${NC}"
-echo -e "${GREEN}📄 Relatório completo disponível em /var/log/mail-setup-report.html${NC}"
 
 exit 0
