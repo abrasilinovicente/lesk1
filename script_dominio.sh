@@ -550,8 +550,22 @@ echo "admin@$BASE_DOMAIN:{PLAIN}dwwzyd" > /etc/dovecot/users
 chmod 640 /etc/dovecot/users
 chown root:dovecot /etc/dovecot/users
 
-mkdir -p /var/mail/vhosts/$BASE_DOMAIN/admin
+echo -e "${YELLOW}Criando Maildir completo para admin@$BASE_DOMAIN...${NC}"
+
+MAILDIR="/var/mail/vhosts/$BASE_DOMAIN/admin"
+
+# Criar a estrutura completa Maildir
+mkdir -p $MAILDIR
+maildirmake.dovecot $MAILDIR
+maildirmake.dovecot $MAILDIR/.Sent
+maildirmake.dovecot $MAILDIR/.Trash
+maildirmake.dovecot $MAILDIR/.Drafts
+maildirmake.dovecot $MAILDIR/.Junk
+
+# Ajustar permissões
 chown -R vmail:vmail /var/mail/vhosts/$BASE_DOMAIN/admin
+
+echo -e "${GREEN}✓ Maildir criado com sucesso!${NC}"
 
 # ====================================
 # REINICIAR SERVIÇOS
